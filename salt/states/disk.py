@@ -17,7 +17,7 @@ Check blkid and test disk type
   disk_blkid:
     disk.blkid:
         - name: /dev/sda1
-        - disktype: zfs
+        - disktype: zfs        # optional
 
 '''
 from __future__ import absolute_import
@@ -38,7 +38,6 @@ def blkid(name, disktype):
     ret = {'name': name,
            'result': False,
            'comment': '',
-           'raw_value' : '',
            'type': '',
            'changes': {}}
 
