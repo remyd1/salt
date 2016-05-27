@@ -97,6 +97,8 @@ from salt import syspaths
 from salt._compat import ElementTree as ET
 import salt.utils.http as http
 import salt.utils.aws as aws
+import salt.loader
+from salt.template import compile_template
 
 # Import salt.cloud libs
 import salt.utils.cloud
@@ -138,12 +140,14 @@ log = logging.getLogger(__name__)
 
 EC2_LOCATIONS = {
     'ap-northeast-1': 'ec2_ap_northeast',
+    'ap-northeast-2': 'ec2_ap_northeast_2',
     'ap-southeast-1': 'ec2_ap_southeast',
     'ap-southeast-2': 'ec2_ap_southeast_2',
     'eu-west-1': 'ec2_eu_west',
     'eu-central-1': 'ec2_eu_central',
     'sa-east-1': 'ec2_sa_east',
     'us-east-1': 'ec2_us_east',
+    'us-gov-west-1': 'ec2_us_gov_west_1',
     'us-west-1': 'ec2_us_west',
     'us-west-2': 'ec2_us_west_oregon',
 }
@@ -643,6 +647,46 @@ def avail_sizes(call=None):
                 'disk': '640 GiB (2 x 320 GiB SSD)',
                 'ram': '60 GiB'
             }
+        },
+        'Dense Storage': {
+            'd2.xlarge': {
+                'id': 'd2.xlarge',
+                'cores': '4',
+                'disk': '6 TiB (3 x 2 TiB hard disk drives)',
+                'ram': '30.5 GiB'
+            },
+            'd2.2xlarge': {
+                'id': 'd2.2xlarge',
+                'cores': '8',
+                'disk': '12 TiB (6 x 2 TiB hard disk drives)',
+                'ram': '61 GiB'
+            },
+            'd2.4xlarge': {
+                'id': 'd2.4xlarge',
+                'cores': '16',
+                'disk': '24 TiB (12 x 2 TiB hard disk drives)',
+                'ram': '122 GiB'
+            },
+            'd2.8xlarge': {
+                'id': 'd2.8xlarge',
+                'cores': '36',
+                'disk': '24 TiB (24 x 2 TiB hard disk drives)',
+                'ram': '244 GiB'
+            },
+        },
+        'GPU': {
+            'g2.2xlarge': {
+                'id': 'g2.2xlarge',
+                'cores': '8',
+                'disk': '60 GiB (1 x 60 GiB SSD)',
+                'ram': '15 GiB'
+            },
+            'g2.8xlarge': {
+                'id': 'g2.8xlarge',
+                'cores': '32',
+                'disk': '240 GiB (2 x 120 GiB SSD)',
+                'ram': '60 GiB'
+            },
         },
         'High I/O': {
             'i2.xlarge': {
@@ -1651,6 +1695,16 @@ def request_instance(vm_=None, call=None):
                 userdata = fh_.read()
 
     if userdata is not None:
+        render_opts = __opts__.copy()
+        render_opts.update(vm_)
+        renderer = __opts__.get('renderer', 'yaml_jinja')
+        rend = salt.loader.render(render_opts, {})
+        blacklist = __opts__['renderer_blacklist']
+        whitelist = __opts__['renderer_whitelist']
+        userdata = compile_template(
+            userdata, rend, renderer, blacklist, whitelist
+        )
+
         params[spot_prefix + 'UserData'] = base64.b64encode(userdata)
 
     vm_size = config.get_cloud_config_value(
@@ -1836,8 +1890,8 @@ def request_instance(vm_=None, call=None):
             termination_key = '{0}BlockDeviceMapping.{1}.Ebs.DeleteOnTermination'.format(spot_prefix, dev_index)
             params[termination_key] = str(set_del_root_vol_on_destroy).lower()
 
-            # Preserve the volume type if specified
-            if rd_type is not None:
+            # Use default volume type if not specified
+            if 'Ebs.VolumeType' not in ex_blockdevicemappings[dev_index]:
                 type_key = '{0}BlockDeviceMapping.{1}.Ebs.VolumeType'.format(spot_prefix, dev_index)
                 params[type_key] = rd_type
 
@@ -2646,7 +2700,11 @@ def queue_instances(instances):
     '''
     for instance_id in instances:
         node = _get_node(instance_id=instance_id)
-        salt.utils.cloud.cache_node(node, __active_provider_name__, __opts__)
+        for name in node:
+            if instance_id == node[name]['instanceId']:
+                salt.utils.cloud.cache_node(node[name],
+                                            __active_provider_name__,
+                                            __opts__)
 
 
 def create_attach_volumes(name, kwargs, call=None, wait_to_finish=True):
@@ -2688,6 +2746,8 @@ def create_attach_volumes(name, kwargs, call=None, wait_to_finish=True):
                 '\'snapshot\', or \'size\''
             )
 
+        if 'tags' in volume:
+            volume_dict['tags'] = volume['tags']
         if 'type' in volume:
             volume_dict['type'] = volume['type']
         if 'iops' in volume:
@@ -3193,7 +3253,10 @@ def show_instance(name=None, instance_id=None, call=None, kwargs=None):
         )
 
     node = _get_node(name=name, instance_id=instance_id)
-    salt.utils.cloud.cache_node(node, __active_provider_name__, __opts__)
+    for name in node:
+        salt.utils.cloud.cache_node(node[name],
+                                    __active_provider_name__,
+                                    __opts__)
     return node
 
 
@@ -4410,6 +4473,7 @@ def get_console_output(
 
     ret = {}
     data = aws.query(params,
+                     return_root=True,
                      location=location,
                      provider=get_provider(),
                      opts=__opts__,

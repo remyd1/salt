@@ -589,10 +589,15 @@ def _user_policies_attached(
                                        entity_filter='User',
                                        region=region, key=key, keyid=keyid,
                                        profile=profile)
-        if {'user_name': name} not in entities.get('policy_users', []):
+        found = False
+        for userdict in entities.get('policy_users', []):
+            if name == userdict.get('user_name'):
+                found = True
+                break
+        if not found:
             policies_to_attach.append(policy)
-    _list = __salt__['boto_iam.list_attached_user_policies'](name, region, key, keyid,
-                                                    profile)
+    _list = __salt__['boto_iam.list_attached_user_policies'](name, region=region, key=key, keyid=keyid,
+                                                    profile=profile)
     oldpolicies = [x.get('policy_arn') for x in _list]
     for policy_data in _list:
         if policy_data.get('policy_name') not in managed_policies \
@@ -610,13 +615,14 @@ def _user_policies_attached(
         for policy_name in policies_to_attach:
             policy_set = __salt__['boto_iam.attach_user_policy'](policy_name,
                                                                  name,
-                                                                 region, key,
-                                                                 keyid,
-                                                                 profile)
+                                                                 region=region, key=key,
+                                                                 keyid=keyid,
+                                                                 profile=profile)
             if not policy_set:
-                _list = __salt__['boto_iam.list_attached_user_policies'](name, region,
-                                                                key, keyid,
-                                                                profile)
+                _list = __salt__['boto_iam.list_attached_user_policies'](name, region=region,
+                                                                key=key,
+                                                                keyid=keyid,
+                                                                profile=profile)
                 newpolicies = [x.get('policy_arn') for x in _list]
                 ret['changes']['new'] = {'manged_policies': newpolicies}
                 ret['result'] = False
@@ -626,21 +632,23 @@ def _user_policies_attached(
         for policy_name in policies_to_detach:
             policy_unset = __salt__['boto_iam.detach_user_policy'](policy_name,
                                                                    name,
-                                                                   region, key,
-                                                                   keyid,
-                                                                   profile)
+                                                                   region=region, key=key,
+                                                                   keyid=keyid,
+                                                                   profile=profile)
             if not policy_unset:
-                _list = __salt__['boto_iam.list_attached_user_policies'](name, region,
-                                                                key, keyid,
-                                                                profile)
+                _list = __salt__['boto_iam.list_attached_user_policies'](name, region=region,
+                                                                key=key,
+                                                                keyid=keyid,
+                                                                profile=profile)
                 newpolicies = [x.get('policy_arn') for x in _list]
                 ret['changes']['new'] = {'managed_policies': newpolicies}
                 ret['result'] = False
                 msg = 'Failed to remove policy {0} from user {1}'
                 ret['comment'] = msg.format(policy_name, name)
                 return ret
-        _list = __salt__['boto_iam.list_attached_user_policies'](name, region, key,
-                                                        keyid, profile)
+        _list = __salt__['boto_iam.list_attached_user_policies'](name, region=region, key=key,
+                                                        keyid=keyid,
+                                                        profile=profile)
         newpolicies = [x.get('policy_arn') for x in _list]
         log.debug(newpolicies)
         ret['changes']['new'] = {'managed_policies': newpolicies}
@@ -672,21 +680,21 @@ def _user_policies_detached(
     for policy_arn in oldpolicies:
         policy_unset = __salt__['boto_iam.detach_user_policy'](policy_arn,
                                                                name,
-                                                               region, key,
-                                                               keyid,
-                                                               profile)
+                                                               region=region, key=key,
+                                                               keyid=keyid,
+                                                               profile=profile)
         if not policy_unset:
-            _list = __salt__['boto_iam.list_attached_user_policies'](name, region,
-                                                            key, keyid,
-                                                            profile)
+            _list = __salt__['boto_iam.list_attached_user_policies'](name, region=region,
+                                                            key=key, keyid=keyid,
+                                                            profile=profile)
             newpolicies = [x.get('policy_arn') for x in _list]
             ret['changes']['new'] = {'managed_policies': newpolicies}
             ret['result'] = False
             msg = 'Failed to detach {0} from user {1}'
             ret['comment'] = msg.format(policy_arn, name)
             return ret
-    _list = __salt__['boto_iam.list_attached_user_policies'](name, region, key,
-                                                    keyid, profile)
+    _list = __salt__['boto_iam.list_attached_user_policies'](name, region=region, key=key,
+                                                    keyid=keyid, profile=profile)
     newpolicies = [x.get('policy_arn') for x in _list]
     ret['changes']['new'] = {'managed_policies': newpolicies}
     msg = '{0} policies detached from user {1}.'
@@ -988,10 +996,15 @@ def _group_policies_attached(
                                        entity_filter='Group',
                                        region=region, key=key, keyid=keyid,
                                        profile=profile)
-        if {'group_name': name} not in entities.get('policy_groups', []):
+        found = False
+        for groupdict in entities.get('policy_groups', []):
+            if name == groupdict.get('group_name'):
+                found = True
+                break
+        if not found:
             policies_to_attach.append(policy)
-    _list = __salt__['boto_iam.list_attached_group_policies'](name, region, key, keyid,
-                                                    profile)
+    _list = __salt__['boto_iam.list_attached_group_policies'](name, region=region, key=key, keyid=keyid,
+                                                    profile=profile)
     oldpolicies = [x.get('policy_arn') for x in _list]
     for policy_data in _list:
         if policy_data.get('policy_name') not in managed_policies \
@@ -1009,13 +1022,13 @@ def _group_policies_attached(
         for policy_name in policies_to_attach:
             policy_set = __salt__['boto_iam.attach_group_policy'](policy_name,
                                                                  name,
-                                                                 region, key,
-                                                                 keyid,
-                                                                 profile)
+                                                                 region=region, key=key,
+                                                                 keyid=keyid,
+                                                                 profile=profile)
             if not policy_set:
-                _list = __salt__['boto_iam.list_attached_group_policies'](name, region,
-                                                                key, keyid,
-                                                                profile)
+                _list = __salt__['boto_iam.list_attached_group_policies'](name, region=region,
+                                                                key=key, keyid=keyid,
+                                                                profile=profile)
                 newpolicies = [x.get('policy_arn') for x in _list]
                 ret['changes']['new'] = {'manged_policies': newpolicies}
                 ret['result'] = False
@@ -1025,21 +1038,21 @@ def _group_policies_attached(
         for policy_name in policies_to_detach:
             policy_unset = __salt__['boto_iam.detach_group_policy'](policy_name,
                                                                    name,
-                                                                   region, key,
-                                                                   keyid,
-                                                                   profile)
+                                                                   region=region, key=key,
+                                                                   keyid=keyid,
+                                                                   profile=profile)
             if not policy_unset:
-                _list = __salt__['boto_iam.list_attached_group_policies'](name, region,
-                                                                key, keyid,
-                                                                profile)
+                _list = __salt__['boto_iam.list_attached_group_policies'](name, region=region,
+                                                                key=key, keyid=keyid,
+                                                                profile=profile)
                 newpolicies = [x.get('policy_arn') for x in _list]
                 ret['changes']['new'] = {'managed_policies': newpolicies}
                 ret['result'] = False
                 msg = 'Failed to remove policy {0} from group {1}'
                 ret['comment'] = msg.format(policy_name, name)
                 return ret
-        _list = __salt__['boto_iam.list_attached_group_policies'](name, region, key,
-                                                        keyid, profile)
+        _list = __salt__['boto_iam.list_attached_group_policies'](name, region=region, key=key,
+                                                        keyid=keyid, profile=profile)
         newpolicies = [x.get('policy_arn') for x in _list]
         log.debug(newpolicies)
         ret['changes']['new'] = {'managed_policies': newpolicies}
@@ -1071,21 +1084,21 @@ def _group_policies_detached(
     for policy_arn in oldpolicies:
         policy_unset = __salt__['boto_iam.detach_group_policy'](policy_arn,
                                                                name,
-                                                               region, key,
-                                                               keyid,
-                                                               profile)
+                                                               region=region, key=key,
+                                                               keyid=keyid,
+                                                               profile=profile)
         if not policy_unset:
-            _list = __salt__['boto_iam.list_attached_group_policies'](name, region,
-                                                            key, keyid,
-                                                            profile)
+            _list = __salt__['boto_iam.list_attached_group_policies'](name, region=region,
+                                                            key=key, keyid=keyid,
+                                                            profile=profile)
             newpolicies = [x.get('policy_arn') for x in _list]
             ret['changes']['new'] = {'managed_policies': newpolicies}
             ret['result'] = False
             msg = 'Failed to detach {0} from group {1}'
             ret['comment'] = msg.format(policy_arn, name)
             return ret
-    _list = __salt__['boto_iam.list_attached_group_policies'](name, region, key,
-                                                    keyid, profile)
+    _list = __salt__['boto_iam.list_attached_group_policies'](name, region=region, key=key,
+                                                    keyid=keyid, profile=profile)
     newpolicies = [x.get('policy_arn') for x in _list]
     ret['changes']['new'] = {'managed_policies': newpolicies}
     msg = '{0} policies detached from group {1}.'
@@ -1093,18 +1106,19 @@ def _group_policies_detached(
     return ret
 
 
-def account_policy(allow_users_to_change_password=None, hard_expiry=None, max_password_age=None,
-                   minimum_password_length=None,
-                   password_reuse_prevention=None,
-                   require_lowercase_characters=None,
-                   require_numbers=None, require_symbols=None,
-                   require_uppercase_characters=None,
-                   region=None, key=None, keyid=None,
-                   profile=None):
+def account_policy(name=None, allow_users_to_change_password=None,
+                   hard_expiry=None, max_password_age=None,
+                   minimum_password_length=None, password_reuse_prevention=None,
+                   require_lowercase_characters=None, require_numbers=None,
+                   require_symbols=None, require_uppercase_characters=None,
+                   region=None, key=None, keyid=None, profile=None):
     '''
     Change account policy.
 
     .. versionadded:: 2015.8.0
+
+    name (string)
+        The name of the account policy
 
     allow_users_to_change_password (bool)
         Allows all IAM users in your account to
@@ -1160,7 +1174,7 @@ def account_policy(allow_users_to_change_password=None, hard_expiry=None, max_pa
         ret['result'] = False
         return ret
     for key, value in config.items():
-        if key == 'region' or key == 'key' or key == 'keyid' or key == 'profile':
+        if key in ('region', 'key', 'keyid', 'profile', 'name'):
             continue
         if value is not None and str(info[key]) != str(value).lower():
             ret['comment'] = os.linesep.join([ret['comment'], 'Policy value {0} has been set to {1}.'.format(value, info[key])])

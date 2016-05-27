@@ -191,7 +191,6 @@ def eni_present(
     subnet_name
         The VPC subnet name the ENI will exist within.
 
-
     private_ip_address
         The private ip address to use for this ENI. If this is not specified
         AWS will automatically assign a private IP address to the ENI. Must be
@@ -595,10 +594,10 @@ def instance_present(name, instance_name=None, instance_id=None, image_id=None,
                      additional_info=None, tenancy=None,
                      instance_profile_arn=None, instance_profile_name=None,
                      ebs_optimized=None, network_interfaces=None,
-                     attributes=None, target_state=None, region=None, key=None,
-                     keyid=None, profile=None):
+                     attributes=None, target_state=None, public_ip=None,
+                     allocation_id=None, allocate_eip=False, region=None,
+                     key=None, keyid=None, profile=None):
     ### TODO - implement 'target_state={running, stopped}'
-    ### TODO - implement image_name->image_id lookups
     '''
     Ensure an EC2 instance is running with the given attributes and state.
 
@@ -614,7 +613,7 @@ def instance_present(name, instance_name=None, instance_id=None, image_id=None,
     image_id
         (string) – The ID of the AMI image to run.
     image_name
-        (string) – The name of the AMI image to run.  NOT IMPLEMENTED.
+        (string) – The name of the AMI image to run.
     tags
         (dict) - Tags to apply to the instance.
     key_name
@@ -715,6 +714,19 @@ def instance_present(name, instance_name=None, instance_id=None, image_id=None,
         are:
             - running
             - stopped
+        Note that this option is currently UNIMPLEMENTED.
+    public_ip:
+        (string) - The IP of a previously allocated EIP address, which will be
+        attached to the instance.  EC2 Classic instances ONLY - for VCP pass in
+        an allocation_id instead.
+    allocation_id:
+        (string) - The ID of a previously allocated EIP address, which will be
+        attached to the instance.  VPC instances ONLY - for Classic pass in
+        a public_ip instead.
+    allocate_eip:
+        (bool) - Allocate and attach an EIP on-the-fly for this instance.  Note
+        you'll want to releaase this address when terminating the instance,
+        either manually or via the 'release_eip' flag to 'instance_absent'.
     region
         (string) - Region to connect to.
     key
@@ -736,24 +748,22 @@ def instance_present(name, instance_name=None, instance_id=None, image_id=None,
     running_states = ('pending', 'rebooting', 'running', 'stopping', 'stopped')
     changed_attrs = {}
 
-    if not instance_id:
-        try:
-            instance_id = __salt__['boto_ec2.get_id'](name=instance_name if instance_name else name,
-                                                      tags=tags, region=region, key=key, keyid=keyid,
-                                                      profile=profile, in_states=running_states)
-        except CommandExecutionError as e:
-            ret['result'] = None
-            ret['comment'] = 'Couldn\'t determine current status of instance {0}.'.format(instance_name)
-            return ret
+    if not exactly_one((image_id, image_name)):
+        raise SaltInvocationError('Exactly one of image_id OR '
+                                  'image_name must be provided.')
+    if (public_ip or allocation_id or allocate_eip) and not exactly_one((public_ip, allocation_id, allocate_eip)):
+        raise SaltInvocationError('At most one of public_ip, allocation_id OR '
+                                  'allocate_eip may be provided.')
 
-    exists = __salt__['boto_ec2.exists'](instance_id=instance_id, region=region,
-                                         key=key, keyid=keyid, profile=profile)
-    if not exists:
-        _create = True
+    if instance_id:
+        exists = __salt__['boto_ec2.exists'](instance_id=instance_id, region=region, key=key,
+                                             keyid=keyid, profile=profile, in_states=running_states)
+        if not exists:
+            _create = True
     else:
-        instances = __salt__['boto_ec2.find_instances'](instance_id=instance_id, region=region,
-                                                        key=key, keyid=keyid, profile=profile,
-                                                        return_objs=True, in_states=running_states)
+        instances = __salt__['boto_ec2.find_instances'](name=instance_name if instance_name else name,
+                                                        region=region, key=key, keyid=keyid, profile=profile,
+                                                        in_states=running_states)
         if not len(instances):
             _create = True
 
@@ -762,6 +772,14 @@ def instance_present(name, instance_name=None, instance_id=None, image_id=None,
             ret['comment'] = 'The instance {0} is set to be created.'.format(name)
             ret['result'] = None
             return ret
+        if image_name:
+            args = {'ami_name': image_name, 'region': region, 'key': key,
+                    'keyid': keyid, 'profile': profile}
+            image_ids = __salt__['boto_ec2.find_images'](**args)
+            if len(image_ids):
+                image_id = image_ids[0]
+            else:
+                image_id = image_name
         r = __salt__['boto_ec2.run'](image_id, instance_name if instance_name else name,
                                      tags=tags, key_name=key_name,
                                      security_groups=security_groups, user_data=user_data,
@@ -791,13 +809,69 @@ def instance_present(name, instance_name=None, instance_id=None, image_id=None,
         ret['changes']['old']['instance_id'] = None
         ret['changes']['new']['instance_id'] = instance_id
 
+        # To avoid issues we only allocate new EIPs at instance creation.
+        # This might miss situations where an instance is initially created
+        # created without and one is added later, but the alternative is the
+        # risk of EIPs allocated at every state run.
+        if allocate_eip:
+            if __opts__['test']:
+                ret['comment'] = 'New EIP would be allocated.'
+                ret['result'] = None
+                return ret
+            domain = 'vpc' if vpc_id or vpc_name else None
+            r = __salt__['boto_ec2.allocate_eip_address'](
+                    domain=domain, region=region, key=key, keyid=keyid,
+                    profile=profile)
+            if not r:
+                ret['result'] = False
+                ret['comment'] = 'Failed to allocate new EIP.'
+                return ret
+            allocation_id = r['allocation_id']
+            log.info("New EIP with address {0} allocated.".format(r['public_ip']))
+        else:
+            log.info("EIP not requested.")
+
+    if public_ip or allocation_id:
+        r = __salt__['boto_ec2.get_eip_address_info'](
+                addresses=public_ip, allocation_ids=allocation_id,
+                region=region, key=key, keyid=keyid, profile=profile)
+        if not r:
+            ret['result'] = False
+            ret['comment'] = 'Failed to lookup EIP {0}.'.format(public_ip if
+                    public_ip else allocation_id)
+            return ret
+        ip = r[0]['public_ip']
+        if r[0].get('instance_id'):
+            if r[0]['instance_id'] != instance_id:
+                ret['result'] = False
+                ret['comment'] = ('EIP {0} is already associated with instance '
+                                  '{1}.'.format(public_ip if public_ip else
+                                  allocation_id, r[0]['instance_id']))
+                return ret
+        else:
+            if __opts__['test']:
+                ret['comment'] = 'Instance {0} to be updated.'.format(name)
+                ret['result'] = None
+                return ret
+            r = __salt__['boto_ec2.associate_eip_address'](
+                    instance_id=instance_id, public_ip=public_ip,
+                    allocation_id=allocation_id, region=region, key=key,
+                    keyid=keyid, profile=profile)
+            if r:
+                ret['changes']['new']['public_ip'] = ip
+            else:
+                ret['result'] = False
+                ret['comment'] = 'Failed to attach EIP to instance {0}.'.format(
+                        instance_name if instance_name else name)
+                return ret
+
     if attributes:
         for k, v in attributes.iteritems():
             curr = __salt__['boto_ec2.get_attribute'](k, instance_id=instance_id, region=region, key=key,
                                                       keyid=keyid, profile=profile)
-            if isinstance(curr, dict):
+            if not isinstance(curr, dict):
                 curr = {}
-            if curr and curr.get(k) == v:
+            if curr.get(k) == v:
                 continue
             else:
                 if __opts__['test']:
@@ -825,7 +899,8 @@ def instance_present(name, instance_name=None, instance_id=None, image_id=None,
 
 
 def instance_absent(name, instance_name=None, instance_id=None,
-                     region=None, key=None, keyid=None, profile=None):
+                    release_eip=False, region=None, key=None, keyid=None,
+                    profile=None):
     '''
     Ensure an EC2 instance does not exist (is stopped and removed).
 
@@ -835,6 +910,8 @@ def instance_absent(name, instance_name=None, instance_id=None,
         (string) - The name of the instance.
     instance_id
         (string) - The ID of the instance.
+    release_eip
+        (bool)   - Release any associated EIPs during termination.
     region
         (string) - Region to connect to.
     key
@@ -848,7 +925,7 @@ def instance_absent(name, instance_name=None, instance_id=None,
     .. versionadded:: 2016.3.0
     '''
     ### TODO - Implement 'force' option??  Would automagically turn off
-    ###        'disableApiTermination',  as needed before trying to delete.
+    ###        'disableApiTermination', as needed, before trying to delete.
     ret = {'name': name,
            'result': True,
            'comment': '',
@@ -863,15 +940,18 @@ def instance_absent(name, instance_name=None, instance_id=None,
                                                       profile=profile, in_states=running_states)
         except CommandExecutionError as e:
             ret['result'] = None
-            ret['comment'] = 'Couldn\'t determine current status of instance {0}.'.format(instance_name)
+            ret['comment'] = ("Couldn't determine current status of instance "
+                              "{0}.".format(instance_name or name))
             return ret
 
-    exists = __salt__['boto_ec2.exists'](instance_id=instance_id, region=region,
-                                         key=key, keyid=keyid, profile=profile)
-    if not exists:
+    instances = __salt__['boto_ec2.find_instances'](instance_id=instance_id, region=region,
+                                                    key=key, keyid=keyid, profile=profile,
+                                                    return_objs=True)
+    if not len(instances):
         ret['result'] = True
         ret['comment'] = 'Instance {0} is already gone.'.format(instance_id)
         return ret
+    instance = instances[0]
 
     ### Honor 'disableApiTermination' - if you want to override it, first use set_attribute() to turn it off
     no_can_do = __salt__['boto_ec2.get_attribute']('disableApiTermination', instance_id=instance_id,
@@ -895,4 +975,129 @@ def instance_absent(name, instance_name=None, instance_id=None,
 
     ret['changes']['old'] = {'instance_id': instance_id}
     ret['changes']['new'] = None
+
+    if release_eip:
+        ip = getattr(instance, 'ip_address', None)
+        if ip:
+            args = {'region': region, 'key': key, 'keyid': keyid, 'profile': profile}
+            if getattr(instance, 'vpc_id', None):
+                r = __salt__['boto_ec2.get_eip_address_info'](addresses=ip, **args)
+                if len(r):
+                    args.update({'allocation_ids': r[0].allocation_id})
+                else:
+                    # I /believe/ this situation is impossible but let's hedge our bets...
+                    ret['result'] = False
+                    ret['comment'] = "Can't determine AllocationId for address {0}.".format(ip)
+                    return ret
+            else:
+                args.update({'public_ip': instance.ip_address})
+            if __salt__['boto_ec2.release_eip_address'](**args):
+                ret['changes']['old'] = {'public_ip': ip}
+            else:
+                ret['result'] = False
+                ret['comment'] = "Failed to release EIP {0}.".format(ip)
+                return ret
+
+    return ret
+
+
+def volume_absent(name, volume_name=None, volume_id=None, instance_name=None,
+                  instance_id=None, device=None, region=None, key=None, keyid=None, profile=None):
+    '''
+    Ensure the EC2 volume is detached and absent.
+
+    name
+        State definition name.
+
+    volume_name
+        Name tag associated with the volume.  For safety, if this matches more than
+        one volume, the state will refuse to apply.
+
+    volume_id
+        Resource ID of the volume.
+
+    instance_name
+        Only remove volume if it is attached to instance with this Name tag.
+        Exclusive with 'instance_id'.  Requires 'device'.
+
+    instance_id
+        Only remove volume if it is attached to this instance.
+        Exclusive with 'instance_name'.  Requires 'device'.
+
+    device
+        Match by device rather than ID.  Requires one of 'instance_name' or
+        'instance_id'.
+
+    region
+        Region to connect to.
+
+    key
+        Secret key to be used.
+
+    keyid
+        Access key to be used.
+
+    profile
+        A dict with region, key and keyid, or a pillar key (string)
+        that contains a dict with region, key and keyid.
+
+    .. versionadded:: Carbon
+    '''
+
+    ret = {'name': name,
+           'result': True,
+           'comment': '',
+           'changes': {}
+          }
+    filters = {}
+    running_states = ('pending', 'rebooting', 'running', 'stopping', 'stopped')
+
+    if not exactly_one((volume_name, volume_id, instance_name, instance_id)):
+        raise SaltInvocationError("Exactly one of 'volume_name', 'volume_id', "
+                                  "'instance_name', or 'instance_id' must be provided.")
+    if (instance_name or instance_id) and not device:
+        raise SaltInvocationError("Parameter 'device' is required when either "
+                                  "'instance_name' or 'instance_id' is specified.")
+    if volume_id:
+        filters.update({'volume-id': volume_id})
+    if volume_name:
+        filters.update({'tag:Name': volume_name})
+    if instance_name:
+        instance_id = __salt__['boto_ec2.get_id'](
+                name=instance_name, region=region, key=key, keyid=keyid,
+                profile=profile, in_states=running_states)
+        if not instance_id:
+            ret['comment'] = ('Instance with Name {0} not found.  Assuming '
+                              'associated volumes gone.'.format(instance_name))
+            return ret
+    if instance_id:
+        filters.update({'attachment.instance-id': instance_id})
+    if device:
+        filters.update({'attachment.device': device})
+
+    args = {'region': region, 'key': key, 'keyid': keyid, 'profile': profile}
+
+    vols = __salt__['boto_ec2.get_all_volumes'](filters=filters, **args)
+    if len(vols) < 1:
+        ret['comment'] = 'Volume matching criteria not found, assuming already absent'
+        return ret
+    if len(vols) > 1:
+        msg = "More than one volume matched criteria, can't continue in state {0}".format(name)
+        log.error(msg)
+        ret['comment'] = msg
+        ret['result'] = False
+        return ret
+    vol = vols[0]
+    log.info('Matched Volume ID {0}'.format(vol))
+
+    if __opts__['test']:
+        ret['comment'] = 'The volume {0} is set to be deleted.'.format(vol)
+        ret['result'] = None
+        return ret
+    if __salt__['boto_ec2.delete_volume'](volume_id=vol, force=True, **args):
+        ret['comment'] = 'Volume {0} deleted.'.format(vol)
+        ret['changes'] = {'old': {'volume_id': vol}, 'new': {'volume_id': None}}
+    else:
+        ret['comment'] = 'Error deleting volume {0}.'.format(vol)
+        ret['result'] = False
     return ret

@@ -49,7 +49,7 @@ import salt.utils.yamlloader as yamlloader
 # Import third party libs
 # pylint: disable=import-error,no-name-in-module,redefined-builtin
 import salt.ext.six as six
-from salt.ext.six.moves import map, range
+from salt.ext.six.moves import map, range, reload_module
 # pylint: enable=import-error,no-name-in-module,redefined-builtin
 
 log = logging.getLogger(__name__)
@@ -298,8 +298,12 @@ class Compiler(object):
         '''
         Enforce the states in a template
         '''
-        high = compile_template(
-            template, self.rend, self.opts['renderer'], **kwargs)
+        high = compile_template(template,
+                                self.rend,
+                                self.opts['renderer'],
+                                self.opts['renderer_blacklist'],
+                                self.opts['renderer_whitelist'],
+                                **kwargs)
         if not high:
             return high
         return self.pad_funcs(high)
@@ -873,8 +877,10 @@ class State(object):
             # process 'site-packages', the 'site' module needs to be reloaded in
             # order for the newly installed package to be importable.
             try:
-                reload(site)
+                reload_module(site)
             except RuntimeError:
+                log.error('Error encountered during module reload. Modules were not reloaded.')
+            except TypeError:
                 log.error('Error encountered during module reload. Modules were not reloaded.')
         self.load_modules(proxy=self.proxy)
         if not self.opts.get('local', False) and self.opts.get('multiprocessing', True):
@@ -2339,8 +2345,11 @@ class State(object):
         '''
         Enforce the states in a template
         '''
-        high = compile_template(
-            template, self.rend, self.opts['renderer'])
+        high = compile_template(template,
+                                self.rend,
+                                self.opts['renderer'],
+                                self.opts['renderer_blacklist'],
+                                self.opts['renderer_whitelist'])
         if not high:
             return high
         high, errors = self.render_template(high, template)
@@ -2352,8 +2361,11 @@ class State(object):
         '''
         Enforce the states in a template, pass the template as a string
         '''
-        high = compile_template_str(
-            template, self.rend, self.opts['renderer'])
+        high = compile_template_str(template,
+                                    self.rend,
+                                    self.opts['renderer'],
+                                    self.opts['renderer_blacklist'],
+                                    self.opts['renderer_whitelist'])
         if not high:
             return high
         high, errors = self.render_template(high, '<template-str>')
@@ -2486,7 +2498,9 @@ class BaseHighState(object):
                     contents,
                     self.state.rend,
                     self.state.opts['renderer'],
-                    saltenv=self.opts['environment']
+                    self.state.opts['renderer_blacklist'],
+                    self.state.opts['renderer_whitelist'],
+                    self.opts['environment']
                 )
             ]
         elif self.opts['top_file_merging_strategy'] == 'merge':
@@ -2507,7 +2521,9 @@ class BaseHighState(object):
                         contents,
                         self.state.rend,
                         self.state.opts['renderer'],
-                        saltenv=saltenv
+                        self.state.opts['renderer_blacklist'],
+                        self.state.opts['renderer_whitelist'],
+                        saltenv
                     )
                 )
             else:
@@ -2526,7 +2542,9 @@ class BaseHighState(object):
                             contents,
                             self.state.rend,
                             self.state.opts['renderer'],
-                            saltenv=saltenv
+                            self.state.opts['renderer_blacklist'],
+                            self.state.opts['renderer_whitelist'],
+                            saltenv
                         )
                     )
             if found > 1:
@@ -2564,7 +2582,9 @@ class BaseHighState(object):
                                 ).get('dest', False),
                                 self.state.rend,
                                 self.state.opts['renderer'],
-                                saltenv=saltenv
+                                self.state.opts['renderer_blacklist'],
+                                self.state.opts['renderer_whitelist'],
+                                saltenv
                             )
                         )
                         done[saltenv].append(sls)
@@ -2747,10 +2767,15 @@ class BaseHighState(object):
             )
         state = None
         try:
-            state = compile_template(
-                fn_, self.state.rend, self.state.opts['renderer'], saltenv,
-                sls, rendered_sls=mods
-            )
+            state = compile_template(fn_,
+                                     self.state.rend,
+                                     self.state.opts['renderer'],
+                                     self.state.opts['renderer_blacklist'],
+                                     self.state.opts['renderer_whitelist'],
+                                     saltenv,
+                                     sls,
+                                     rendered_sls=mods
+                                     )
         except SaltRenderError as exc:
             msg = 'Rendering SLS \'{0}:{1}\' failed: {2}'.format(
                 saltenv, sls, exc
@@ -2811,8 +2836,16 @@ class BaseHighState(object):
                         continue
 
                     if inc_sls.startswith('.'):
-                        levels, include = \
-                            re.match(r'^(\.+)(.*)$', inc_sls).groups()
+                        match = re.match(r'^(\.+)(.*)$', inc_sls)
+                        if match:
+                            levels, include = match.groups()
+                        else:
+                            msg = ('Badly formatted include {0} found in include '
+                                    'in SLS \'{2}:{3}\''
+                                    .format(inc_sls, saltenv, sls))
+                            log.error(msg)
+                            errors.append(msg)
+                            continue
                         level_count = len(levels)
                         p_comps = sls.split('.')
                         if state_data.get('source', '').endswith('/init.sls'):

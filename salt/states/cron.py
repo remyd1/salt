@@ -123,7 +123,7 @@ Added the opportunity to set a job with a special keyword like '@reboot' or
     /path/to/cron/script:
       cron.present:
         - user: root
-        - special: @hourly
+        - special: '@hourly'
 
 The script will be executed every reboot if cron daemon support this option.
 
@@ -132,7 +132,7 @@ The script will be executed every reboot if cron daemon support this option.
     /path/to/cron/otherscript:
       cron.absent:
         - user: root
-        - special: @daily
+        - special: '@daily'
 
 This counter part definition will ensure than a job with a special keyword
 is not set.
@@ -527,6 +527,7 @@ def file(name,
             __env__,
             context,
             defaults,
+            False,        # skip_verify
             **kwargs
         )
     except Exception as exc:
@@ -560,12 +561,11 @@ def file(name,
         ret['comment'] = 'Unable to manage file: {0}'.format(exc)
         return ret
 
+    cron_ret = None
     if ret['changes']:
         cron_ret = __salt__['cron.write_cron_file_verbose'](user, cron_path)
-        ret['changes'] = {'diff': ret['changes']['diff']}
         ret['comment'] = 'Crontab for user {0} was updated'.format(user)
     elif ret['result']:
-        cron_ret = None
         ret['comment'] = 'Crontab for user {0} is in the correct ' \
                          'state'.format(user)
 

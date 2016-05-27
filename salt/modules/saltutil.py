@@ -408,6 +408,34 @@ def sync_proxymodules(saltenv=None, refresh=False):
     return ret
 
 
+def sync_engines(saltenv=None, refresh=False):
+    '''
+    .. versionadded:: 2016.3.0
+
+    Sync engine modules from ``salt://_engines`` to the minion
+
+    saltenv : base
+        The fileserver environment from which to sync. To sync from more than
+        one environment, pass a comma-separated list.
+
+    refresh : True
+        If ``True``, refresh the available execution modules on the minion.
+        This refresh will be performed even if no new engine modules are synced.
+        Set to ``False`` to prevent this refresh.
+
+    CLI Examples:
+
+    .. code-block:: bash
+
+        salt '*' saltutil.sync_engines
+        salt '*' saltutil.sync_engines saltenv=base,dev
+    '''
+    ret = _sync('engines', saltenv)
+    if refresh:
+        refresh_modules()
+    return ret
+
+
 def sync_output(saltenv=None, refresh=True):
     '''
     Sync outputters from ``salt://_output`` to the minion
@@ -540,6 +568,7 @@ def sync_all(saltenv=None, refresh=True):
     ret['utils'] = sync_utils(saltenv, False)
     ret['log_handlers'] = sync_log_handlers(saltenv, False)
     ret['proxymodules'] = sync_proxymodules(saltenv, False)
+    ret['engines'] = sync_engines(saltenv, False)
     if refresh:
         refresh_modules()
         refresh_pillar()
@@ -674,13 +703,49 @@ def clear_cache():
 
 def find_job(jid):
     '''
-    Return the data for a specific job id
+    Return the data for a specific job id that is currently running.
+
+    jid
+        The job id to search for and return data.
 
     CLI Example:
 
     .. code-block:: bash
 
         salt '*' saltutil.find_job <job id>
+
+    Note that the find_job function only returns job information when the job is still running. If
+    the job is currently running, the output looks something like this:
+
+    .. code-block:: bash
+
+        # salt my-minion saltutil.find_job 20160503150049487736
+        my-minion:
+            ----------
+            arg:
+                - 30
+            fun:
+                test.sleep
+            jid:
+                20160503150049487736
+            pid:
+                9601
+            ret:
+            tgt:
+                my-minion
+            tgt_type:
+                glob
+            user:
+                root
+
+    If the job has already completed, the job cannot be found and therefore the function returns
+    an empty dictionary, which looks like this on the CLI:
+
+    .. code-block:: bash
+
+        # salt my-minion saltutil.find_job 20160503150049487736
+        my-minion:
+            ----------
     '''
     for data in running():
         if data['jid'] == jid:
@@ -770,6 +835,22 @@ def term_job(jid):
     return signal_job(jid, signal.SIGTERM)
 
 
+def term_all_jobs():
+    '''
+    Sends a termination signal (SIGTERM 15) to all currently running jobs
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' saltutil.term_all_jobs
+    '''
+    ret = []
+    for data in running():
+        ret.append(signal_job(data['jid'], signal.SIGTERM))
+    return ret
+
+
 def kill_job(jid):
     '''
     Sends a kill signal (SIGKILL 9) to the named salt job's process
@@ -783,6 +864,24 @@ def kill_job(jid):
     # Some OS's (Win32) don't have SIGKILL, so use salt_SIGKILL which is set to
     # an appropriate value for the operating system this is running on.
     return signal_job(jid, salt_SIGKILL)
+
+
+def kill_all_jobs():
+    '''
+    Sends a kill signal (SIGKILL 9) to all currently running jobs
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' saltutil.kill_all_jobs
+    '''
+    # Some OS's (Win32) don't have SIGKILL, so use salt_SIGKILL which is set to
+    # an appropriate value for the operating system this is running on.
+    ret = []
+    for data in running():
+        ret.append(signal_job(data['jid'], salt_SIGKILL))
+    return ret
 
 
 def regen_keys():
@@ -952,20 +1051,26 @@ def cmd_iter(tgt,
 
 def runner(_fun, **kwargs):
     '''
-    Execute a runner module (this function must be run on the master)
+    Execute a runner function. This function must be run on the master,
+    either by targeting a minion running on a master or by using
+    salt-call on a master.
 
     .. versionadded:: 2014.7.0
 
-    name
+    _fun
         The name of the function to run
+
     kwargs
         Any keyword arguments to pass to the runner function
 
     CLI Example:
 
+    In this example, assume that `master_minion` is a minion running
+    on a master.
+
     .. code-block:: bash
 
-        salt '*' saltutil.runner jobs.list_jobs
+        salt master_minion saltutil.runner jobs.list_jobs
     '''
     kwargs = salt.utils.clean_kwargs(**kwargs)
 

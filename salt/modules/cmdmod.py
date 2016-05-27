@@ -377,11 +377,12 @@ def _run(cmd,
         # requested. The command output is what will be controlled by the
         # 'loglevel' parameter.
         msg = (
-            'Executing command {0}{1}{0} {2}in directory \'{3}\''.format(
+            'Executing command {0}{1}{0} {2}in directory \'{3}\'{4}'.format(
                 '\'' if not isinstance(cmd, list) else '',
                 cmd,
                 'as user \'{0}\' '.format(runas) if runas else '',
-                cwd
+                cwd,
+                ' in the background, no output will be logged' if bg else ''
             )
         )
         log.info(log_callback(msg))
@@ -490,6 +491,10 @@ def _run(cmd,
             return ret
 
         out, err = proc.stdout, proc.stderr
+        if err is None:
+            # Will happen if redirect_stderr is True, since stderr was sent to
+            # stdout.
+            err = ''
 
         if rstrip:
             if out is not None:
@@ -687,10 +692,10 @@ def run(cmd,
     Note that ``env`` represents the environment variables for the command, and
     should be formatted as a dict, or a YAML string which resolves to a dict.
 
-    :param str cmd: The command to run. ex: 'ls -lart /home'
+    :param str cmd: The command to run. ex: ``ls -lart /home``
 
     :param str cwd: The current working directory to execute the command in,
-      defaults to `/root` (`C:\` in windows)
+      defaults to ``/root`` (``C:\`` in windows)
 
     :param str stdin: A string of standard input can be specified for the
       command to be run using the ``stdin`` parameter. This can be useful in cases
@@ -1009,7 +1014,7 @@ def shell(cmd,
 
         This passes the cmd argument directly to the shell
         without any further processing! Be absolutely sure that you
-        have properly santized the command passed to this function
+        have properly sanitized the command passed to this function
         and do not use untrusted inputs.
 
     .. note::
@@ -2781,8 +2786,9 @@ def run_bg(cmd,
         clean_env=False,
         template=None,
         umask=None,
-        log_callback=None,
         timeout=None,
+        output_loglevel='debug',
+        log_callback=None,
         reset_system_locale=True,
         saltenv='base',
         **kwargs):
@@ -2798,6 +2804,10 @@ def run_bg(cmd,
 
     :param str cwd: The current working directory to execute the command in,
       defaults to `/root` (`C:\` in windows)
+
+    :param str output_loglevel: Control the loglevel at which the output from
+      the command is logged. Note that the command being run will still be logged
+      (loglevel: DEBUG) regardless, unless ``quiet`` is used for this value.
 
     :param str runas: User to run script as. If running on a Windows minion you
       must also pass a password
@@ -2879,7 +2889,7 @@ def run_bg(cmd,
 
     .. code-block:: bash
 
-        salt '*' cmd.run_bg "ls -l | awk '/foo/{print \\$2}'"
+        salt '*' cmd.run_bg "fstrim-all"
 
     The template arg can be set to 'jinja' or another supported template
     engine to render the command arguments before execution.
@@ -2893,7 +2903,7 @@ def run_bg(cmd,
 
     .. code-block:: bash
 
-        salt '*' cmd.run "Get-ChildItem C:\\ " shell='powershell'
+        salt '*' cmd.run_bg "Get-ChildItem C:\\ " shell='powershell'
 
     If an equal sign (``=``) appears in an argument to a Salt command it is
     interpreted as a keyword argument in the format ``key=val``. That
@@ -2902,7 +2912,7 @@ def run_bg(cmd,
 
     .. code-block:: bash
 
-        salt '*' cmd.run cmd='sed -e s/=/:/g'
+        salt '*' cmd.run_bg cmd='ls -lR / | sed -e s/=/:/g > /tmp/dontwait'
     '''
 
     python_shell = _python_shell_default(python_shell,
@@ -2911,12 +2921,11 @@ def run_bg(cmd,
                stdin=None,
                stderr=None,
                stdout=None,
-               output_loglevel=None,
+               output_loglevel=output_loglevel,
                use_vt=None,
                bg=True,
                with_communicate=False,
                rstrip=False,
-
                runas=runas,
                shell=shell,
                python_shell=python_shell,

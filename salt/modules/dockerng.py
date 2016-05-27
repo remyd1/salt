@@ -370,7 +370,7 @@ VALID_CREATE_OPTS = {
     'domainname': {
         'validator': 'string',
         'path': 'Config:Domainname',
-        'default': '',
+        'get_default_from_container': True,
     },
     'interactive': {
         'api_name': 'stdin_open',
@@ -400,7 +400,7 @@ VALID_CREATE_OPTS = {
     'memory_swap': {
         'api_name': 'memswap_limit',
         'path': 'HostConfig:MemorySwap',
-        'default': 0,
+        'get_default_from_container': True,
     },
     'mac_address': {
         'validator': 'string',
@@ -432,6 +432,12 @@ VALID_CREATE_OPTS = {
         'path': 'Config:Volumes',
         'image_path': 'Config:Volumes',
     },
+    'stop_signal': {
+        'validator': 'string',
+        'path': 'Config:StopSignal',
+        'min_docker': (1, 9, 0),
+        'default': '',
+    },
     'cpu_shares': {
         'validator': 'number',
         'path': 'HostConfig:CpuShares',
@@ -442,8 +448,9 @@ VALID_CREATE_OPTS = {
         'default': '',
     },
     'labels': {
-      'path': 'Config:Labels',
-      'default': {},
+        'path': 'Config:Labels',
+        'image_path': 'Config:Labels',
+        'default': {},
     },
     'binds': {
         'path': 'HostConfig:Binds',
@@ -527,15 +534,14 @@ def __virtual__():
     Only load if docker libs are present
     '''
     if HAS_DOCKER_PY:
-        try:
-            docker_py_versioninfo = _get_docker_py_versioninfo()
-        except CommandExecutionError:
-            docker_py_versioninfo = None
+        docker_py_versioninfo = _get_docker_py_versioninfo()
 
         # Don't let a failure to interpret the version keep this module from
         # loading. Log a warning (log happens in _get_docker_py_versioninfo()).
-        if docker_py_versioninfo is None \
-                or docker_py_versioninfo >= MIN_DOCKER_PY:
+        if docker_py_versioninfo is None:
+            return (False, 'Docker module found, but no version could be'
+                    ' extracted')
+        if docker_py_versioninfo >= MIN_DOCKER_PY:
             try:
                 docker_versioninfo = version().get('VersionInfo')
             except CommandExecutionError:
@@ -545,24 +551,26 @@ def __virtual__():
                 return __virtualname__
             else:
                 return (False,
-                    'Insufficient Docker version for dockerng (required: '
-                    '{0}, installed: {1})'.format(
-                        '.'.join(map(str, MIN_DOCKER)),
-                        '.'.join(map(str, docker_versioninfo))))
-        else:
-            return (False,
+                        'Insufficient Docker version for dockerng (required: '
+                        '{0}, installed: {1}); You need to "pip install -U docker-py"'.format(
+                            '.'.join(map(str, MIN_DOCKER)),
+                            '.'.join(map(str, docker_versioninfo))))
+        return (False,
                 'Insufficient docker-py version for dockerng (required: '
                 '{0}, installed: {1})'.format(
                     '.'.join(map(str, MIN_DOCKER_PY)),
                     '.'.join(map(str, docker_py_versioninfo))))
-    return (False, 'Docker module could not get imported')
+    return (False, 'Docker module could not get imported; You need to "pip install docker-py"')
 
 
 def _get_docker_py_versioninfo():
     '''
-    Returns a version_info tuple for docker-py
+    Returns the version_info tuple from docker-py
     '''
-    return docker.version_info
+    try:
+        return docker.version_info
+    except AttributeError:
+        pass
 
 
 # Decorators
@@ -605,11 +613,16 @@ class _client_version(object):
             _get_client()
             current_version = '.'.join(map(str, _get_docker_py_versioninfo()))
             if distutils.version.StrictVersion(current_version) < self.version:
-                raise CommandExecutionError(
+                error_message = (
                     'This function requires a Docker Client version of at least '
                     '{0}. Version in use is {1}.'
-                    .format(self.version, current_version)
-                )
+                    .format(self.version, current_version))
+                minion_conf = __salt__['config.get']('docker.version', NOTSET)
+                if minion_conf is not NOTSET:
+                    error_message += (
+                        ' Hint: Your minion configuration specified'
+                        ' `docker.version` = "{0}"'.format(minion_conf))
+                raise CommandExecutionError(error_message)
             return func(*args, **salt.utils.clean_kwargs(**kwargs))
         return _mimic_signature(func, wrapper)
 
@@ -673,7 +686,7 @@ def _change_state(name, action, expected, *args, **kwargs):
                 'state': {'old': expected, 'new': expected},
                 'comment': ('Container \'{0}\' already {1}'
                             .format(name, expected))}
-    response = _client_wrapper(action, name, *args, **kwargs)
+    _client_wrapper(action, name, *args, **kwargs)
     _clear_context()
     try:
         post = state(name)
@@ -682,8 +695,6 @@ def _change_state(name, action, expected, *args, **kwargs):
         post = None
     ret = {'result': post == expected,
            'state': {'old': pre, 'new': post}}
-    if action == 'wait':
-        ret['exit_status'] = response
     return ret
 
 
@@ -1226,7 +1237,7 @@ def _validate_input(kwargs,
             kwargs['memory_swap'] = \
                 salt.utils.human_size_to_bytes(kwargs['memory_swap'])
         except ValueError:
-            if kwargs['memory_swap'] in -1:
+            if kwargs['memory_swap'] == -1:
                 # memory_swap of -1 means swap is disabled
                 return
             raise SaltInvocationError(
@@ -1445,8 +1456,8 @@ def _validate_input(kwargs,
                         .format(container_path, bind)
                     )
                 log.warning('Host path {0} in bind {1} is not absolute,'
-                         ' assuming it is a docker volume.'.format(host_path,
-                                                                   bind))
+                            ' assuming it is a docker volume.'
+                            .format(host_path, bind))
             if not os.path.isabs(container_path):
                 raise SaltInvocationError(
                     'Container path {0} in bind {1} is not absolute'
@@ -1634,7 +1645,7 @@ def _validate_input(kwargs,
                 # just a name assume it is a network
                 log.info(
                     'Assuming network_mode \'{0}\' is a network.'.format(
-                      kwargs['network_mode'])
+                        kwargs['network_mode'])
                 )
         except SaltInvocationError:
             raise SaltInvocationError(
@@ -3392,7 +3403,8 @@ def build(path=None,
           cache=True,
           rm=True,
           api_response=False,
-          fileobj=None):
+          fileobj=None,
+          dockerfile=None):
     '''
     Builds a docker image from a Dockerfile or a URL
 
@@ -3420,6 +3432,11 @@ def build(path=None,
         to be passed in place of a file ``path`` argument. This argument should
         not be used from the CLI, only from other Salt code.
 
+    dockerfile
+        Allows for an alternative Dockerfile to be specified.  Path to alternative
+        Dockefile is relative to the build path for the Docker container.
+
+        .. versionadded:: develop
 
     **RETURN DATA**
 
@@ -3451,6 +3468,10 @@ def build(path=None,
 
         salt myminion dockerng.build /path/to/docker/build/dir image=myimage:dev
         salt myminion dockerng.build https://github.com/myuser/myrepo.git image=myimage:latest
+
+        .. versionadded:: develop
+
+        salt myminion dockerng.build /path/to/docker/build/dir dockerfile=Dockefile.different image=myimage:dev
     '''
     _prep_pull()
 
@@ -3462,7 +3483,8 @@ def build(path=None,
                                quiet=False,
                                fileobj=fileobj,
                                rm=rm,
-                               nocache=not cache)
+                               nocache=not cache,
+                               dockerfile=dockerfile)
     ret = {'Time_Elapsed': time.time() - time_started}
     _clear_context()
 
@@ -4849,7 +4871,7 @@ def unpause(name):
 unfreeze = salt.utils.alias_function(unpause, 'unfreeze')
 
 
-def wait(name):
+def wait(name, ignore_already_stopped=False, fail_on_exit_status=False):
     '''
     Wait for the container to exit gracefully, and return its exit code
 
@@ -4860,6 +4882,13 @@ def wait(name):
     name
         Container name or ID
 
+    ignore_already_stopped
+        Boolean flag that prevent execution to fail, if a container
+        is already stopped.
+
+    fail_on_exit_status
+        Boolean flag to report execution as failure if ``exit_status``
+        is different than 0.
 
     **RETURN DATA**
 
@@ -4878,7 +4907,36 @@ def wait(name):
 
         salt myminion dockerng.wait mycontainer
     '''
-    return _change_state(name, 'wait', 'stopped')
+    try:
+        pre = state(name)
+    except CommandExecutionError:
+        # Container doesn't exist anymore
+        return {'result': ignore_already_stopped,
+                'comment': 'Container \'{0}\' absent'.format(name)}
+    already_stopped = pre == 'stopped'
+    response = _client_wrapper('wait', name)
+    _clear_context()
+    try:
+        post = state(name)
+    except CommandExecutionError:
+        # Container doesn't exist anymore
+        post = None
+
+    if already_stopped:
+        success = ignore_already_stopped
+    elif post == 'stopped':
+        success = True
+    else:
+        success = False
+
+    result = {'result': success,
+              'state': {'old': pre, 'new': post},
+              'exit_status': response}
+    if already_stopped:
+        result['comment'] = 'Container \'{0}\' already stopped'.format(name)
+    if fail_on_exit_status and result['result']:
+        result['result'] = result['exit_status'] == 0
+    return result
 
 
 # Functions to run commands inside containers

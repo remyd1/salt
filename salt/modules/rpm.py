@@ -17,6 +17,20 @@ import salt.utils.decorators as decorators
 import salt.utils.pkg.rpm
 # pylint: disable=import-error,redefined-builtin
 from salt.ext.six.moves import zip
+from salt.ext import six
+
+try:
+    import rpm
+    HAS_RPM = True
+except ImportError:
+    HAS_RPM = False
+
+try:
+    import rpmUtils.miscutils
+    HAS_RPMUTILS = True
+except ImportError:
+    HAS_RPMUTILS = False
+
 # pylint: enable=import-error,redefined-builtin
 from salt.exceptions import CommandExecutionError, SaltInvocationError
 
@@ -157,17 +171,49 @@ def verify(*packages, **kwargs):
               'r': 'readme'}
     ret = {}
     ignore_types = kwargs.get('ignore_types', [])
+    if not isinstance(ignore_types, (list, six.string_types)):
+        raise SaltInvocationError(
+            'ignore_types must be a list or a comma-separated string'
+        )
+    if isinstance(ignore_types, six.string_types):
+        try:
+            ignore_types = [x.strip() for x in ignore_types.split(',')]
+        except AttributeError:
+            ignore_types = [x.strip() for x in str(ignore_types).split(',')]
+
+    verify_options = kwargs.get('verify_options', [])
+    if not isinstance(verify_options, (list, six.string_types)):
+        raise SaltInvocationError(
+            'verify_options must be a list or a comma-separated string'
+        )
+    if isinstance(verify_options, six.string_types):
+        try:
+            verify_options = [x.strip() for x in verify_options.split(',')]
+        except AttributeError:
+            verify_options = [x.strip() for x in str(verify_options).split(',')]
+
+    cmd = ['rpm']
+    cmd.extend(['--' + x for x in verify_options])
     if packages:
-        cmd = ['rpm', '-V']
+        cmd.append('-V')
         # Can't concatenate a tuple, must do a list.extend()
         cmd.extend(packages)
     else:
-        cmd = ['rpm', '-Va']
-    out = __salt__['cmd.run'](cmd,
-                              output_loglevel='trace',
-                              ignore_retcode=True,
-                              python_shell=False)
-    for line in salt.utils.itertools.split(out, '\n'):
+        cmd.append('-Va')
+    out = __salt__['cmd.run_all'](cmd,
+                                  output_loglevel='trace',
+                                  ignore_retcode=True,
+                                  python_shell=False)
+
+    if not out['stdout'].strip() and out['retcode'] != 0:
+        # If there is no stdout and the retcode is 0, then verification
+        # succeeded, but if the retcode is nonzero, then the command failed.
+        msg = 'Failed to verify package(s)'
+        if out['stderr']:
+            msg += ': {0}'.format(out['stderr'])
+        raise CommandExecutionError(msg)
+
+    for line in salt.utils.itertools.split(out['stdout'], '\n'):
         fdict = {'mismatch': []}
         if 'missing' in line:
             line = ' ' + line
@@ -462,6 +508,7 @@ def info(*packages, **attr):
         "url": "%|URL?{url: %{URL}\\n}|",
         "summary": "summary: %{SUMMARY}\\n",
         "description": "description:\\n%{DESCRIPTION}\\n",
+        "edition": "edition: %|EPOCH?{%{EPOCH}:}|%{VERSION}-%{RELEASE}\\n",
     }
 
     attr = attr.get('attr', None) and attr['attr'].split(",") or None
@@ -475,6 +522,9 @@ def info(*packages, **attr):
         if 'name' not in attr:
             attr.append('name')
             query.append(attr_map['name'])
+        if 'edition' not in attr:
+            attr.append('edition')
+            query.append(attr_map['edition'])
     else:
         for attr_k, attr_v in attr_map.iteritems():
             if attr_k != 'description':
@@ -495,7 +545,7 @@ def info(*packages, **attr):
     else:
         out = call['stdout']
 
-    ret = dict()
+    _ret = list()
     for pkg_info in re.split(r"----*", out):
         pkg_info = pkg_info.strip()
         if not pkg_info:
@@ -542,6 +592,50 @@ def info(*packages, **attr):
         if attr and 'description' in attr or not attr:
             pkg_data['description'] = os.linesep.join(descr)
         if pkg_name:
-            ret[pkg_name] = pkg_data
+            pkg_data['name'] = pkg_name
+            _ret.append(pkg_data)
+
+    # Force-sort package data by version,
+    # pick only latest versions
+    # (in case multiple packages installed, e.g. kernel)
+    ret = dict()
+    for pkg_data in reversed(sorted(_ret, cmp=lambda a_vrs, b_vrs: version_cmp(a_vrs['edition'], b_vrs['edition']))):
+        pkg_name = pkg_data.pop('name')
+        if pkg_name not in ret:
+            ret[pkg_name] = pkg_data.copy()
+            del ret[pkg_name]['edition']
 
     return ret
+
+
+def version_cmp(ver1, ver2):
+    '''
+    .. versionadded:: 2015.8.9
+
+    Do a cmp-style comparison on two packages. Return -1 if ver1 < ver2, 0 if
+    ver1 == ver2, and 1 if ver1 > ver2. Return None if there was a problem
+    making the comparison.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' pkg.version_cmp '0.2-001' '0.2.0.1-002'
+    '''
+    try:
+        if HAS_RPM:
+            cmp_func = rpm.labelCompare
+        elif HAS_RPMUTILS:
+            cmp_func = rpmUtils.miscutils.compareEVR
+        else:
+            cmp_func = None
+        cmp_result = cmp_func is None and 2 or cmp_func(salt.utils.str_version_to_evr(ver1),
+                                                        salt.utils.str_version_to_evr(ver2))
+        if cmp_result not in (-1, 0, 1):
+            raise Exception("Comparison result '{0}' is invalid".format(cmp_result))
+
+        return cmp_result
+    except Exception as exc:
+        log.warning("Failed to compare version '{0}' to '{1}' using RPM: {2}".format(ver1, ver2, exc))
+
+    return salt.utils.version_cmp(ver1, ver2)

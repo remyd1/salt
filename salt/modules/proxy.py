@@ -86,6 +86,13 @@ def _get_proxy_windows(types=None):
             if key not in types:
                 del ret[key]
 
+    # Return enabled info
+    reg_val = __salt__['reg.read_value']('HKEY_CURRENT_USER',
+                                         r'SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings',
+                                         'ProxyEnable')
+    enabled = reg_val.get('vdata', 0)
+    ret['enabled'] = True if enabled == 1 else False
+
     return ret
 
 
@@ -99,6 +106,9 @@ def _set_proxy_windows(server, port, types=None, bypass_hosts=None, import_winht
 
     __salt__['reg.set_value']('HKEY_CURRENT_USER', r'SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings',
                               'ProxyServer', server_str)
+
+    __salt__['reg.set_value']('HKEY_CURRENT_USER', r'SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings',
+                              'ProxyEnable', 1, vtype='REG_DWORD')
 
     if bypass_hosts is not None:
         bypass_hosts_str = '<local>;{0}'.format(';'.join(bypass_hosts))
@@ -119,6 +129,12 @@ def get_http_proxy(network_service="Ethernet"):
 
     network_service
         The network service to apply the changes to, this only necessary on OSX
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' proxy.get_http_proxy Ethernet
     '''
     if __grains__['os'] == 'Windows':
         return _get_proxy_windows(['http'])
@@ -149,6 +165,12 @@ def set_http_proxy(server, port, user=None, password=None, network_service="Ethe
     bypass_hosts
         The hosts that are allowed to by pass the proxy. Only used on Windows for other OS's use
         set_proxy_bypass to edit the bypass hosts.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' proxy.set_http_proxy example.com 1080 user=proxy_user password=proxy_pass network_service=Ethernet
     '''
     if __grains__['os'] == 'Windows':
         return _set_proxy_windows(server, port, ['http'], bypass_hosts)
@@ -162,6 +184,12 @@ def get_https_proxy(network_service="Ethernet"):
 
     network_service
         The network service to apply the changes to, this only necessary on OSX
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' proxy.get_https_proxy Ethernet
     '''
     if __grains__['os'] == 'Windows':
         return _get_proxy_windows(['https'])
@@ -192,6 +220,12 @@ def set_https_proxy(server, port, user=None, password=None, network_service="Eth
     bypass_hosts
         The hosts that are allowed to by pass the proxy. Only used on Windows for other OS's use
         set_proxy_bypass to edit the bypass hosts.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' proxy.set_https_proxy example.com 1080 user=proxy_user password=proxy_pass network_service=Ethernet
     '''
     if __grains__['os'] == 'Windows':
         return _set_proxy_windows(server, port, ['https'], bypass_hosts)
@@ -205,6 +239,12 @@ def get_ftp_proxy(network_service="Ethernet"):
 
     network_service
         The network service to apply the changes to, this only necessary on OSX
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' proxy.get_ftp_proxy Ethernet
     '''
     if __grains__['os'] == 'Windows':
         return _get_proxy_windows(['ftp'])
@@ -234,6 +274,12 @@ def set_ftp_proxy(server, port, user=None, password=None, network_service="Ether
     bypass_hosts
         The hosts that are allowed to by pass the proxy. Only used on Windows for other OS's use
         set_proxy_bypass to edit the bypass hosts.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' proxy.set_ftp_proxy example.com 1080 user=proxy_user password=proxy_pass network_service=Ethernet
     '''
     if __grains__['os'] == 'Windows':
         return _set_proxy_windows(server, port, ['ftp'], bypass_hosts)
@@ -307,6 +353,12 @@ def set_proxy_win(server, port, types=None, bypass_hosts=None):
 
     bypass_hosts
         The hosts that are allowed to by pass the proxy.
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' proxy.set_http_proxy example.com 1080 types="['http', 'https']"
     '''
     if __grains__['os'] == 'Windows':
         return _set_proxy_windows(server, port, types, bypass_hosts)
@@ -315,6 +367,12 @@ def set_proxy_win(server, port, types=None, bypass_hosts=None):
 def get_proxy_win():
     '''
     Gets all of the proxy settings in one call, only available on Windows
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' proxy.get_proxy_win
     '''
     if __grains__['os'] == 'Windows':
         return _get_proxy_windows()

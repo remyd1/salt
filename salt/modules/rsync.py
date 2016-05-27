@@ -19,8 +19,20 @@ from salt.exceptions import CommandExecutionError, SaltInvocationError
 
 log = logging.getLogger(__name__)
 
+__virtualname__ = 'rsync'
 
-def _check(delete, force, update, passwordfile, exclude, excludefrom):
+
+def __virtual__():
+    '''
+    Only load module if rsync binary is present
+    '''
+    if salt.utils.which('rsync'):
+        return __virtualname__
+    return (False, 'The rsync execution module cannot be loaded: '
+            'the rsync binary is not in the path.')
+
+
+def _check(delete, force, update, passwordfile, exclude, excludefrom, dryrun):
     '''
     Generate rsync options
     '''
@@ -40,6 +52,8 @@ def _check(delete, force, update, passwordfile, exclude, excludefrom):
             exclude = False
     if exclude:
         options.extend(['--exclude', exclude])
+    if dryrun:
+        options.append('--dry-run')
     return options
 
 
@@ -50,7 +64,8 @@ def rsync(src,
           update=False,
           passwordfile=None,
           exclude=None,
-          excludefrom=None):
+          excludefrom=None,
+          dryrun=False):
     '''
     .. versionchanged:: 2016.3.0
         Return data now contains just the output of the rsync command, instead
@@ -82,13 +97,16 @@ def rsync(src,
         exclude = __salt__['config.option']('rsync.exclude')
     if not excludefrom:
         excludefrom = __salt__['config.option']('rsync.excludefrom')
+    if not dryrun:
+        dryrun = __salt__['config.option']('rsync.dryrun')
     if not src or not dst:
         raise SaltInvocationError('src and dst cannot be empty')
 
-    option = _check(delete, force, update, passwordfile, exclude, excludefrom)
+    option = _check(delete, force, update, passwordfile, exclude, excludefrom, dryrun)
     cmd = ['rsync'] + option + [src, dst]
+    log.debug('Running rsync command: {0}'.format(cmd))
     try:
-        return __salt__['cmd.run'](cmd, python_shell=False)
+        return __salt__['cmd.run_all'](cmd, python_shell=False)
     except (IOError, OSError) as exc:
         raise CommandExecutionError(exc.strerror)
 

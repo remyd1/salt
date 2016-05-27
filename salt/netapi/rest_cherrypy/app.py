@@ -72,10 +72,21 @@ A REST API for Salt
     debug : ``False``
         Starts the web server in development mode. It will reload itself when
         the underlying code is changed and will output more debugging info.
+    log_access_file
+        Path to a file to write HTTP access logs.
+
+        .. versionaddedd:: Carbon
+    log_error_file
+        Path to a file to write HTTP error logs.
+
+        .. versionaddedd:: Carbon
     ssl_crt
         The path to a SSL certificate. (See below)
     ssl_key
         The path to the private key for your SSL certificate. (See below)
+    ssl_chain
+        (Optional when using PyOpenSSL) the certificate chain to pass to
+        ``Context.load_verify_locations``.
     disable_ssl
         A flag to disable SSL. Warning: your Salt authentication credentials
         will be sent in the clear!
@@ -173,6 +184,30 @@ The token may be sent in one of two ways:
             -d tgt='*' \\
             -d fun=test.ping
 
+  Another example using the :program:`requests` library in Python:
+
+  .. code-block:: python
+
+      >>> import requests
+      >>> session = requests.Session()
+      >>> session.post('http://localhost:8000/login', json={
+          'username': 'saltdev',
+          'password': 'saltdev',
+          'eauth': 'auto',
+      })
+      <Response [200]>
+      >>> resp = session.post('http://localhost:8000', json=[{
+          'client': 'local',
+          'tgt': '*',
+          'fun': 'test.arg',
+          'arg': ['foo', 'bar'],
+          'kwarg': {'baz': 'Baz!'},
+      }])
+      >>> resp.json()
+      {u'return': [{
+          ...snip...
+      }]}
+
 .. seealso:: You can bypass the session handling via the :py:class:`Run` URL.
 
 Usage
@@ -245,6 +280,7 @@ command sent to minions as well as a runner function on the master::
     :mailheader:`Accept` request header.
 
 .. |200| replace:: success
+.. |400| replace:: bad or malformed request
 .. |401| replace:: authentication required
 .. |406| replace:: requested Content-Type not available
 '''
@@ -520,6 +556,8 @@ def hypermedia_handler(*args, **kwargs):
     except (salt.exceptions.EauthAuthenticationError,
             salt.exceptions.TokenAuthenticationError):
         raise cherrypy.HTTPError(401)
+    except salt.exceptions.SaltInvocationError:
+        raise cherrypy.HTTPError(400)
     except (salt.exceptions.SaltDaemonNotRunning,
             salt.exceptions.SaltReqTimeoutError) as exc:
         raise cherrypy.HTTPError(503, exc.strerror)
@@ -771,6 +809,10 @@ class LowDataAdapter(object):
         for chunk in lowstate:
             if token:
                 chunk['token'] = token
+                if cherrypy.session.get('user'):
+                    chunk['__current_eauth_user'] = cherrypy.session.get('user')
+                if cherrypy.session.get('groups'):
+                    chunk['__current_eauth_groups'] = cherrypy.session.get('groups')
 
             if client:
                 chunk['client'] = client
@@ -822,14 +864,9 @@ class LowDataAdapter(object):
         '''
         import inspect
 
-        # Grab all available client interfaces
-        clients = [name for name, _ in inspect.getmembers(salt.netapi.NetapiClient,
-            predicate=inspect.ismethod) if not name.startswith('__')]
-        clients.remove('run')  # run method calls client interfaces
-
         return {
             'return': "Welcome",
-            'clients': clients,
+            'clients': salt.netapi.CLIENTS,
         }
 
     @cherrypy.tools.salt_token()
@@ -847,6 +884,7 @@ class LowDataAdapter(object):
             :resheader Content-Type: |res_ct|
 
             :status 200: |200|
+            :status 400: |400|
             :status 401: |401|
             :status 406: |406|
 
@@ -1011,6 +1049,7 @@ class Minions(LowDataAdapter):
             :resheader Content-Type: |res_ct|
 
             :status 200: |200|
+            :status 400: |400|
             :status 401: |401|
             :status 406: |406|
 
@@ -1512,6 +1551,9 @@ class Login(LowDataAdapter):
         cherrypy.response.headers['X-Auth-Token'] = cherrypy.session.id
         cherrypy.session['token'] = token['token']
         cherrypy.session['timeout'] = (token['expire'] - token['start']) / 60
+        cherrypy.session['user'] = token['name']
+        if 'groups' in token:
+            cherrypy.session['groups'] = token['groups']
 
         # Grab eauth config for the current backend for the current user
         try:
@@ -1591,6 +1633,7 @@ class Run(LowDataAdapter):
             request body.
 
             :status 200: |200|
+            :status 400: |400|
             :status 401: |401|
             :status 406: |406|
 
@@ -2356,6 +2399,8 @@ class API(object):
                 'max_request_body_size': self.apiopts.get(
                     'max_request_body_size', 1048576),
                 'debug': self.apiopts.get('debug', False),
+                'log.access_file': self.apiopts.get('log_access_file', ''),
+                'log.error_file': self.apiopts.get('log_error_file', ''),
             },
             '/': {
                 'request.dispatch': cherrypy.dispatch.MethodDispatcher(),

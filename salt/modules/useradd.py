@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 '''
 Manage users with the useradd command
+
+.. important::
+    If you feel that Salt should be using this module to manage users on a
+    minion, and it is using a different module (or gives an error similar to
+    *'user.info' is not available*), see :ref:`here
+    <module-provider-override>`.
 '''
 from __future__ import absolute_import
 
@@ -14,8 +20,10 @@ import copy
 
 # Import salt libs
 import salt.utils
+import salt.utils.decorators as decorators
 from salt.ext import six
 from salt.exceptions import CommandExecutionError
+from salt.utils import locales
 
 log = logging.getLogger(__name__)
 
@@ -44,10 +52,10 @@ def _get_gecos(name):
         # Assign empty strings for any unspecified trailing GECOS fields
         while len(gecos_field) < 4:
             gecos_field.append('')
-        return {'fullname': str(gecos_field[0]),
-                'roomnumber': str(gecos_field[1]),
-                'workphone': str(gecos_field[2]),
-                'homephone': str(gecos_field[3])}
+        return {'fullname': locales.sdecode(gecos_field[0]),
+                'roomnumber': locales.sdecode(gecos_field[1]),
+                'workphone': locales.sdecode(gecos_field[2]),
+                'homephone': locales.sdecode(gecos_field[3])}
 
 
 def _build_gecos(gecos_dict):
@@ -55,7 +63,7 @@ def _build_gecos(gecos_dict):
     Accepts a dictionary entry containing GECOS field names and their values,
     and returns a full GECOS comment string, to be used with usermod.
     '''
-    return '{0},{1},{2},{3}'.format(gecos_dict.get('fullname', ''),
+    return u'{0},{1},{2},{3}'.format(gecos_dict.get('fullname', ''),
                                     gecos_dict.get('roomnumber', ''),
                                     gecos_dict.get('workphone', ''),
                                     gecos_dict.get('homephone', ''))
@@ -147,10 +155,9 @@ def add(name,
                         if 'group' not in line[:5]:
                             continue
 
-                        for val in line.split(' '):
-                            cmd.extend([
-                                '-g', str(val[1])
-                            ])
+                        cmd.extend([
+                            '-g', str(line.split()[-1])
+                        ])
 
                         # We found what we wanted, let's break out of the loop
                         break
@@ -544,7 +551,7 @@ def get_loginclass(name):
             try:
                 ret = line.split(None, 1)[1]
                 break
-            except ValueError:
+            except (ValueError, IndexError):
                 continue
     else:
         ret = ''
@@ -572,6 +579,22 @@ def _format_info(data):
             'roomnumber': gecos_field[1],
             'workphone': gecos_field[2],
             'homephone': gecos_field[3]}
+
+
+@decorators.which('id')
+def primary_group(name):
+    '''
+    Return the primary group of the named user
+
+    .. versionadded:: 2016.3.0
+
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt '*' user.primary_group saltadmin
+    '''
+    return __salt__['cmd.run'](['id', '-g', '-n', name])
 
 
 def list_groups(name):

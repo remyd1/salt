@@ -86,7 +86,7 @@ import salt.utils
 
 # Import Third Party Libs
 try:
-    from pyVim.connect import SmartConnect, Disconnect
+    from pyVim.connect import GetSi, SmartConnect, Disconnect
     from pyVmomi import vim, vmodl
     HAS_PYVMOMI = True
 except ImportError:
@@ -184,6 +184,13 @@ def get_service_instance(host, username, password, protocol=None, port=None):
     if port is None:
         port = 443
 
+    service_instance = GetSi()
+    if service_instance:
+        if service_instance._GetStub().host == ':'.join([host, str(port)]):
+            service_instance._GetStub().GetConnection()
+            return service_instance
+        Disconnect(service_instance)
+
     try:
         service_instance = SmartConnect(
             host=host,
@@ -197,6 +204,18 @@ def get_service_instance(host, username, password, protocol=None, port=None):
                       'Please check the debug log for more information.'.format(host)
         try:
             if (isinstance(exc, vim.fault.HostConnectFault) and '[SSL: CERTIFICATE_VERIFY_FAILED]' in exc.msg) or '[SSL: CERTIFICATE_VERIFY_FAILED]' in str(exc):
+                import ssl
+                default_context = ssl._create_default_https_context
+                ssl._create_default_https_context = ssl._create_unverified_context
+                service_instance = SmartConnect(
+                    host=host,
+                    user=username,
+                    pwd=password,
+                    protocol=protocol,
+                    port=port
+                )
+                ssl._create_default_https_context = default_context
+            elif (isinstance(exc, vim.fault.HostConnectFault) and 'SSL3_GET_SERVER_CERTIFICATE\', \'certificate verify failed' in exc.msg) or 'SSL3_GET_SERVER_CERTIFICATE\', \'certificate verify failed' in str(exc):
                 import ssl
                 default_context = ssl._create_default_https_context
                 ssl._create_default_https_context = ssl._create_unverified_context

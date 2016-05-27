@@ -14,7 +14,6 @@ import os.path
 import pprint
 import socket
 import urllib
-import inspect
 import yaml
 
 import ssl
@@ -38,6 +37,7 @@ except ImportError:
 # Import salt libs
 import salt.utils
 import salt.utils.xmlutil as xml
+import salt.utils.args
 import salt.loader
 import salt.config
 import salt.version
@@ -132,6 +132,7 @@ def query(url,
           handle=False,
           agent=USERAGENT,
           hide_fields=None,
+          raise_error=True,
           **kwargs):
     '''
     Query a resource, and decode the return data
@@ -306,7 +307,16 @@ def query(url,
             method, url, params=params, data=data, **req_kwargs
         )
         result.raise_for_status()
-        if stream is True or handle is True:
+        if stream is True:
+            # fake a HTTP response header
+            header_callback('HTTP/1.0 {0} MESSAGE'.format(result.status_code))
+            # fake streaming the content
+            streaming_callback(result.content)
+            return {
+                'handle': result,
+            }
+
+        if handle is True:
             return {
                 'handle': result,
                 'body': result.content,
@@ -446,9 +456,11 @@ def query(url,
                 return ret
 
             tornado.httpclient.AsyncHTTPClient.configure('tornado.curl_httpclient.CurlAsyncHTTPClient')
-            client_argspec = inspect.getargspec(tornado.curl_httpclient.CurlAsyncHTTPClient.initialize)
+            client_argspec = salt.utils.args.get_function_argspec(
+                    tornado.curl_httpclient.CurlAsyncHTTPClient.initialize)
         else:
-            client_argspec = inspect.getargspec(tornado.simple_httpclient.SimpleAsyncHTTPClient.initialize)
+            client_argspec = salt.utils.args.get_function_argspec(
+                    tornado.simple_httpclient.SimpleAsyncHTTPClient.initialize)
 
         supports_max_body_size = 'max_body_size' in client_argspec.args
 
@@ -470,6 +482,7 @@ def query(url,
                     proxy_port=proxy_port,
                     proxy_username=proxy_username,
                     proxy_password=proxy_password,
+                    raise_error=raise_error,
                     **req_kwargs
                 )
             else:
@@ -489,6 +502,7 @@ def query(url,
                     proxy_port=proxy_port,
                     proxy_username=proxy_username,
                     proxy_password=proxy_password,
+                    raise_error=raise_error,
                     **req_kwargs
                 )
         except tornado.httpclient.HTTPError as exc:
@@ -593,7 +607,7 @@ def query(url,
         else:
             text = True
 
-        if decode_out and os.path.exists(decode_out):
+        if decode_out:
             with salt.utils.fopen(decode_out, 'w') as dof:
                 dof.write(result_text)
 
@@ -752,7 +766,9 @@ def _render(template, render, renderer, template_dict, opts):
         if not renderer:
             renderer = opts.get('renderer', 'yaml_jinja')
         rend = salt.loader.render(opts, {})
-        return compile_template(template, rend, renderer, **template_dict)
+        blacklist = opts.get('renderer_blacklist')
+        whitelist = opts.get('renderer_whitelist')
+        return compile_template(template, rend, renderer, blacklist, whitelist, **template_dict)
     with salt.utils.fopen(template, 'r') as fh_:
         return fh_.read()
 

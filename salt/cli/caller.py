@@ -22,6 +22,7 @@ import salt.payload
 import salt.transport
 import salt.utils.args
 import salt.utils.jid
+import salt.utils.minion
 import salt.defaults.exitcodes
 from salt.log import LOG_LEVELS
 from salt.utils import is_windows
@@ -229,7 +230,8 @@ class BaseCaller(object):
             if isinstance(oput, six.string_types):
                 ret['out'] = oput
         is_local = self.opts['local'] or self.opts.get(
-            'file_client', False) == 'local'
+            'file_client', False) == 'local' or self.opts.get(
+            'master_type') == 'disable'
         returners = self.opts.get('return', '').split(',')
         if (not is_local) or returners:
             ret['id'] = self.opts['id']
@@ -246,7 +248,6 @@ class BaseCaller(object):
                 pass
 
         # return the job infos back up to the respective minion's master
-
         if not is_local:
             try:
                 mret = ret.copy()
@@ -254,6 +255,10 @@ class BaseCaller(object):
                 self.return_pub(mret)
             except Exception:
                 pass
+        elif self.opts['cache_jobs']:
+            # Local job cache has been enabled
+            salt.utils.minion.cache_jobs(self.opts, ret['jid'], ret)
+
         # close raet channel here
         return ret
 

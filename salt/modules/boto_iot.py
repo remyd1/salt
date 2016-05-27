@@ -35,9 +35,9 @@ Connection module for Amazon IoT
     .. code-block:: yaml
 
         myprofile:
-            keyid: GKTADJGHEIQSXMKKRBJ08H
-            key: askdjghsdfjkghWupUjasdflkdfklgjsdfjajkghs
-            region: us-east-1
+          keyid: GKTADJGHEIQSXMKKRBJ08H
+          key: askdjghsdfjkghWupUjasdflkdfklgjsdfjajkghs
+          region: us-east-1
 
 :depends: boto3
 
@@ -85,9 +85,11 @@ def __virtual__():
     # which was added in boto 2.8.0
     # https://github.com/boto/boto/commit/33ac26b416fbb48a60602542b4ce15dcc7029f12
     if not HAS_BOTO:
-        return False
+        return (False, 'The boto_iot module could not be loaded: '
+                'boto libraries not found')
     elif _LooseVersion(boto3.__version__) < _LooseVersion(required_boto3_version):
-        return False
+        return (False, 'The boto_cognitoidentity module could not be loaded: '
+                'boto version {0} or later must be installed.'.format(required_boto3_version))
     else:
         return True
 
@@ -345,6 +347,12 @@ def list_policies(region=None, key=None, keyid=None, profile=None):
 
     CLI Example:
 
+    .. code-block:: bash
+
+        salt myminion boto_iot.list_policies
+
+    Example Return:
+
     .. code-block:: yaml
 
         policies:
@@ -371,7 +379,13 @@ def list_policy_versions(policyName,
     '''
     List the versions available for the given policy.
 
-    CLI Example
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt myminion boto_iot.list_policy_versions mypolicy
+
+    Example Return:
 
     .. code-block:: yaml
 
@@ -427,7 +441,13 @@ def list_principal_policies(principal,
     '''
     List the policies attached to the given principal.
 
-    CLI Example
+    CLI Example:
+
+    .. code-block:: bash
+
+        salt myminion boto_iot.list_principal_policies myprincipal
+
+    Example Return:
 
     .. code-block:: yaml
 
@@ -661,6 +681,12 @@ def list_topic_rules(topic=None, ruleDisabled=None,
     Returns list of rules
 
     CLI Example:
+
+    .. code-block:: bash
+
+        salt myminion boto_iot.list_topic_rules
+
+    Example Return:
 
     .. code-block:: yaml
 

@@ -421,6 +421,7 @@ class SaltfileMixIn(six.with_metaclass(MixInMeta, object)):
 
             # We reached this far! Set the Saltfile value on the option
             setattr(self.options, option.dest, cli_config[option.dest])
+            option.explicit = True
 
         # Let's also search for options referred in any option groups
         for group in self.option_groups:
@@ -441,10 +442,8 @@ class SaltfileMixIn(six.with_metaclass(MixInMeta, object)):
                     # the one from Saltfile, if any
                     continue
 
-                if option.dest in cli_config:
-                    setattr(self.options,
-                            option.dest,
-                            cli_config[option.dest])
+                setattr(self.options, option.dest, cli_config[option.dest])
+                option.explicit = True
 
         # Any left over value in the saltfile can now be safely added
         for key in cli_config:
@@ -912,9 +911,16 @@ class DaemonMixIn(six.with_metaclass(MixInMeta, object)):
         Check if a pid file exists and if it is associated with
         a running process.
         '''
+        # There is no os.getppid method for windows
+        if salt.utils.is_windows():
+            from salt.utils.win_functions import get_parent_pid
+            ppid = get_parent_pid()
+        else:
+            ppid = os.getppid()
+
         if self.check_pidfile():
             pid = self.get_pidfile()
-            if self.check_pidfile() and self.is_daemonized(pid) and not os.getppid() == pid:
+            if self.check_pidfile() and self.is_daemonized(pid) and not ppid == pid:
                 return True
         return False
 
@@ -1394,8 +1400,7 @@ class ExecutionOptionsMixIn(six.with_metaclass(MixInMeta, object)):
             '-u', '--update-bootstrap',
             default=False,
             action='store_true',
-            help='Update salt-bootstrap to the latest develop version on '
-                 'GitHub.'
+            help='Update salt-bootstrap to the latest stable bootstrap release.'
         )
         group.add_option(
             '-y', '--assume-yes',

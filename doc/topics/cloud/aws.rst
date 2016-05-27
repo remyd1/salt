@@ -186,16 +186,6 @@ These retries and timeouts relate to validating the Administrator password
 once AWS provides the credentials via the AWS API.
 
 
-Windows Deploy Timeouts
-=======================
-For Windows instances, it may take longer than normal for the instance to be
-ready.  In these circumstances, the provider configuration can be configured
-with a ``win_deploy_auth_retries`` and/or a ``win_deploy_auth_retry_delay``
-setting, which default to 10 retries and a one second delay between retries.
-These retries and timeouts relate to validating the Administrator password
-once AWS provides the credentials via the AWS API.
-
-
 Key Pairs
 =========
 In order to create an instance with Salt installed and configured, a key pair
@@ -283,6 +273,7 @@ Set up an initial profile at ``/etc/salt/cloud.profiles``:
         - { size: 10, device: /dev/sdf }
         - { size: 10, device: /dev/sdg, type: io1, iops: 1000 }
         - { size: 10, device: /dev/sdh, type: io1, iops: 1000 }
+        - { size: 10, device: /dev/sdi, tags: {"Environment": "production"} }
       # optionally add tags to profile:
       tag: {'Environment': 'production', 'Role': 'database'}
       # force grains to sync after install
@@ -572,7 +563,7 @@ Rename on Destroy
 =================
 When instances on EC2 are destroyed, there will be a lag between the time that
 the action is sent, and the time that Amazon cleans up the instance. During
-this time, the instance still retails a Name tag, which will cause a collision
+this time, the instance still retains a Name tag, which will cause a collision
 if the creation of an instance with the same name is attempted before the
 cleanup occurs. In order to avoid such collisions, Salt Cloud can be configured
 to rename instances when they are destroyed. The new name will look something

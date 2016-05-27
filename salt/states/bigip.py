@@ -19,7 +19,7 @@ def __virtual__():
     '''
     Only load if the bigip exec module is available in __salt__
     '''
-    return 'bigip' if 'bigip.exec_action' in __salt__ else False
+    return 'bigip' if 'bigip.list_transaction' in __salt__ else False
 
 
 def _load_result(response, ret):
@@ -2490,7 +2490,7 @@ def delete_virtual(hostname, username, password, name):
 
 def list_monitor(hostname, username, password, monitor_type, name):
     '''
-    A fucntion to list an exsiting monitor.
+    A function to list an exsiting monitor.
 
     hostname
         The host/address of the bigip device

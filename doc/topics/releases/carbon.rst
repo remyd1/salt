@@ -4,6 +4,21 @@
 Salt Release Notes - Codename Carbon
 ====================================
 
+Features
+========
+
+- Minions can run in stand-alone mode to use beacons and engines without
+  having to connect to a master. (Thanks @adelcast!)
+
+Config Changes
+==============
+
+The following default config values were changed:
+
+- gitfs_ssl_verify: Changed from ``False`` to ``True``
+- git_pillar_ssl_verify: Changed from ``False`` to ``True``
+- winrepo_ssl_verify: Changed from ``False`` to ``True``
+
 Grains Changes
 ==============
 
@@ -28,7 +43,7 @@ External Module Packaging
 =========================
 
 Modules may now be packaged via entry-points in setuptools. See
-:doc:`external module packaging </topics/tutorials/packaging_modules` tutorial
+:doc:`external module packaging </topics/tutorials/packaging_modules>` tutorial
 for more information.
 
 Functionality Changes
@@ -45,6 +60,9 @@ Functionality Changes
   lists all groups for the specified user, including groups beginning with an
   underscore. In previous releases, groups beginning with an underscore were
   excluded from the list of groups.
+- A new option for minions called ``master_tries`` has been added. This specifies
+  the number of times a minion should attempt to contact a master to attempt a connection.
+  This allows better handling of occasional master downtime in a multi-master topology.
 
 Deprecations
 ============

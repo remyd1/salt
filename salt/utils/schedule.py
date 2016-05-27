@@ -355,7 +355,11 @@ class Schedule(object):
         log.debug('Persisting schedule')
         try:
             with salt.utils.fopen(schedule_conf, 'wb+') as fp_:
-                fp_.write(yaml.dump({'schedule': self.opts['schedule']}))
+                fp_.write(
+                    salt.utils.to_bytes(
+                        yaml.dump({'schedule': self.opts['schedule']})
+                    )
+                )
         except (IOError, OSError):
             log.error('Failed to persist the updated schedule',
                       exc_info_on_loglevel=logging.DEBUG)
@@ -521,16 +525,16 @@ class Schedule(object):
         else:
             thread_cls = threading.Thread
 
-        proc = thread_cls(target=self.handle_func, args=(multiprocessing_enabled, func, data))
         if multiprocessing_enabled:
             with default_signals(signal.SIGINT, signal.SIGTERM):
+                proc = thread_cls(target=self.handle_func, args=(multiprocessing_enabled, func, data))
                 # Reset current signals before starting the process in
                 # order not to inherit the current signal handlers
                 proc.start()
-        else:
-            proc.start()
-        if multiprocessing_enabled:
             proc.join()
+        else:
+            proc = thread_cls(target=self.handle_func, args=(multiprocessing_enabled, func, data))
+            proc.start()
 
     def enable_schedule(self):
         '''
@@ -613,6 +617,7 @@ class Schedule(object):
             self.returners = salt.loader.returners(self.opts, self.functions)
         ret = {'id': self.opts.get('id', 'master'),
                'fun': func,
+               'fun_args': [],
                'schedule': data['name'],
                'jid': salt.utils.jid.gen_jid()}
 
@@ -694,10 +699,12 @@ class Schedule(object):
             args = tuple()
             if 'args' in data:
                 args = data['args']
+                ret['fun_args'].extend(data['args'])
 
             kwargs = {}
             if 'kwargs' in data:
                 kwargs = data['kwargs']
+                ret['fun_args'].append(data['kwargs'])
 
             if func not in self.functions:
                 ret['return'] = self.functions.missing_fun_string(func)
@@ -764,11 +771,11 @@ class Schedule(object):
                         # Send back to master so the job is included in the job list
                         mret = ret.copy()
                         mret['jid'] = 'req'
-                        channel = salt.transport.Channel.factory(self.opts, usage='salt_schedule')
+                        event = salt.utils.event.get_event('minion', opts=self.opts, listen=False)
                         load = {'cmd': '_return', 'id': self.opts['id']}
                         for key, value in six.iteritems(mret):
                             load[key] = value
-                        channel.send(load)
+                        event.fire_event(load, '__schedule_return')
 
                 log.debug('schedule.handle_func: Removing {0}'.format(proc_fn))
                 os.unlink(proc_fn)

@@ -223,12 +223,23 @@ def access_keys(opts):
                 except KeyError:
                     log.error('ACL user {0} is not available'.format(user))
                     continue
-        keyfile = os.path.join(
-            opts['cachedir'], '.{0}_key'.format(user)
-        )
+
+        if salt.utils.is_windows():
+            # The username may contain '\' if it is in Windows
+            # 'DOMAIN\username' format. Fix this for the keyfile path.
+            keyfile = os.path.join(
+                opts['cachedir'], '.{0}_key'.format(user.replace('\\', '_'))
+            )
+        else:
+            keyfile = os.path.join(
+                opts['cachedir'], '.{0}_key'.format(user)
+            )
 
         if os.path.exists(keyfile):
             log.debug('Removing stale keyfile: {0}'.format(keyfile))
+            if salt.utils.is_windows() and not os.access(keyfile, os.W_OK):
+                # Cannot delete read-only files on Windows.
+                os.chmod(keyfile, stat.S_IRUSR | stat.S_IWUSR)
             os.unlink(keyfile)
 
         key = salt.crypt.Crypticle.generate_key_string()
@@ -844,12 +855,13 @@ class RemoteFuncs(object):
             )
             return {}
         # Prepare the runner object
-        opts = {'fun': load['fun'],
+        opts = {}
+        opts.update(self.opts)
+        opts.update({'fun': load['fun'],
                 'arg': load['arg'],
                 'id': load['id'],
                 'doc': False,
-                'conf_file': self.opts['conf_file']}
-        opts.update(self.opts)
+                'conf_file': self.opts['conf_file']})
         runner = salt.runner.Runner(opts)
         return runner.run()
 

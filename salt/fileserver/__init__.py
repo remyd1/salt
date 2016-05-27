@@ -272,7 +272,7 @@ def is_file_ignored(opts, fname):
     return False
 
 
-def clear_lock(clear_func, lock_type, remote=None):
+def clear_lock(clear_func, role, remote=None, lock_type='update'):
     '''
     Function to allow non-fileserver functions to clear update locks
 
@@ -282,7 +282,7 @@ def clear_lock(clear_func, lock_type, remote=None):
         lists, one containing messages describing successfully cleared locks,
         and one containing messages describing errors encountered.
 
-    lock_type
+    role
         What type of lock is being cleared (gitfs, git_pillar, etc.). Used
         solely for logging purposes.
 
@@ -290,14 +290,16 @@ def clear_lock(clear_func, lock_type, remote=None):
         Optional string which should be used in ``func`` to pattern match so
         that a subset of remotes can be targeted.
 
+    lock_type : update
+        Which type of lock to clear
 
     Returns the return data from ``clear_func``.
     '''
-    msg = 'Clearing update lock for {0} remotes'.format(lock_type)
+    msg = 'Clearing {0} lock for {1} remotes'.format(lock_type, role)
     if remote:
         msg += ' matching {0}'.format(remote)
     log.debug(msg)
-    return clear_func(remote=remote)
+    return clear_func(remote=remote, lock_type=lock_type)
 
 
 class Fileserver(object):
@@ -727,7 +729,7 @@ class FSChan(object):
         self.fs.update()
         self.cmd_stub = {'ext_nodes': {}}
 
-    def send(self, load, tries=None, timeout=None):
+    def send(self, load, tries=None, timeout=None, raw=False):  # pylint: disable=unused-argument
         '''
         Emulate the channel send method, the tries and timeout are not used
         '''

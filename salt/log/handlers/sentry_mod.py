@@ -14,7 +14,7 @@
 
     Configuring the python `Sentry`_ client, `Raven`_, should be done under the
     ``sentry_handler`` configuration key. Additional `context` may be provided
-    for coresponding grain item(s).
+    for corresponding grain item(s).
     At the bare minimum, you need to define the `DSN`_. As an example:
 
     .. code-block:: yaml
@@ -81,6 +81,7 @@ from __future__ import absolute_import
 import logging
 
 # Import salt libs
+import salt.loader
 from salt.log import LOG_LEVELS
 
 # Import 3rd party libs
@@ -92,6 +93,8 @@ except ImportError:
     HAS_RAVEN = False
 
 log = logging.getLogger(__name__)
+__grains__ = {}
+__salt__ = {}
 
 # Define the module's virtual name
 __virtualname__ = 'sentry'
@@ -99,6 +102,8 @@ __virtualname__ = 'sentry'
 
 def __virtual__():
     if HAS_RAVEN is True:
+        __grains__ = salt.loader.grains(__opts__)
+        __salt__ = salt.loader.minion_mods(__opts__)
         return __virtualname__
     return False
 

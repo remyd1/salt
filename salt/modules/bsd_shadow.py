@@ -1,6 +1,12 @@
 # -*- coding: utf-8 -*-
 '''
 Manage the password database on BSD systems
+
+.. important::
+    If you feel that Salt should be using this module to manage passwords on a
+    minion, and it is using a different module (or gives an error similar to
+    *'shadow.info' is not available*), see :ref:`here
+    <module-provider-override>`.
 '''
 
 # Import python libs
@@ -73,7 +79,7 @@ def info(name):
             with salt.utils.fopen('/etc/master.passwd', 'r') as fp_:
                 for line in fp_:
                     if line.startswith('{0}:'.format(name)):
-                        change, expire = line.rstrip('\n')[5:7]
+                        change, expire = line.split(':')[5:7]
                         break
         except IOError:
             change = expire = None

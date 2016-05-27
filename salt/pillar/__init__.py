@@ -41,7 +41,7 @@ def get_pillar(opts, grains, minion_id, saltenv=None, ext=None, funcs=None,
         'local': Pillar
     }.get(opts['file_client'], Pillar)
     # If local pillar and we're caching, run through the cache system first
-    log.info('Determining pillar cache')
+    log.debug('Determining pillar cache')
     if opts['pillar_cache']:
         log.info('Compiling pillar from cache')
         log.debug('get_pillar using pillar cache with ext: {0}'.format(ext))
@@ -370,8 +370,10 @@ class Pillar(object):
                                 ),
                             self.rend,
                             self.opts['renderer'],
+                            self.opts['renderer_blacklist'],
+                            self.opts['renderer_whitelist'],
                             self.opts['pillarenv'],
-                            _pillar_rend=True
+                            _pillar_rend=True,
                             )
                         ]
             else:
@@ -386,8 +388,10 @@ class Pillar(object):
                                     top,
                                     self.rend,
                                     self.opts['renderer'],
+                                    self.opts['renderer_blacklist'],
+                                    self.opts['renderer_whitelist'],
                                     saltenv=saltenv,
-                                    _pillar_rend=True
+                                    _pillar_rend=True,
                                     )
                                 )
         except Exception as exc:
@@ -424,8 +428,10 @@ class Pillar(object):
                                         ).get('dest', False),
                                     self.rend,
                                     self.opts['renderer'],
+                                    self.opts['renderer_blacklist'],
+                                    self.opts['renderer_whitelist'],
                                     saltenv=saltenv,
-                                    _pillar_rend=True
+                                    _pillar_rend=True,
                                     )
                                 )
                     except Exception as exc:
@@ -553,15 +559,24 @@ class Pillar(object):
                 log.error(msg)
                 errors.append(msg)
             else:
-                log.debug(
-                    'Specified SLS \'%s\' in environment \'%s\' was not '
-                    'found. This could be because SLS \'%s\' is in an '
-                    'environment other than \'%s\', but \'%s\' is included in '
-                    'that environment\'s Pillar top file. It could also be '
-                    'due to environment \'%s\' not being defined in '
-                    '"pillar_roots"',
-                    sls, saltenv, sls, saltenv, saltenv, saltenv
-                )
+                msg = ('Specified SLS \'{0}\' in environment \'{1}\' was not '
+                       'found. '.format(sls, saltenv))
+                if self.opts.get('__git_pillar', False) is True:
+                    msg += (
+                        'This is likely caused by a git_pillar top file '
+                        'containing an environment other than the one for the '
+                        'branch in which it resides. Each git_pillar '
+                        'branch/tag must have its own top file.'
+                    )
+                else:
+                    msg += (
+                        'This could be because SLS \'{0}\' is in an '
+                        'environment other than \'{1}\', but \'{1}\' is '
+                        'included in that environment\'s Pillar top file. It '
+                        'could also be due to environment \'{1}\' not being '
+                        'defined in \'pillar_roots\'.'.format(sls, saltenv)
+                    )
+                log.debug(msg)
                 # return state, mods, errors
                 return None, mods, errors
         state = None
@@ -569,6 +584,8 @@ class Pillar(object):
             state = compile_template(fn_,
                                      self.rend,
                                      self.opts['renderer'],
+                                     self.opts['renderer_blacklist'],
+                                     self.opts['renderer_whitelist'],
                                      saltenv,
                                      sls,
                                      _pillar_rend=True,
@@ -712,13 +729,19 @@ class Pillar(object):
             return pillar, errors
         ext = None
         # Bring in CLI pillar data
-        pillar.update(self.pillar_override)
+        if self.pillar_override and isinstance(self.pillar_override, dict):
+            pillar = merge(pillar,
+                           self.pillar_override,
+                           self.merge_strategy,
+                           self.opts.get('renderer', 'yaml'),
+                           self.opts.get('pillar_merge_lists', False))
+
         for run in self.opts['ext_pillar']:
             if not isinstance(run, dict):
                 errors.append('The "ext_pillar" option is malformed')
                 log.critical(errors[-1])
                 return {}, errors
-            if run.keys()[0] in self.opts.get('exclude_ext_pillar', []):
+            if next(six.iterkeys(run)) in self.opts.get('exclude_ext_pillar', []):
                 continue
             for key, val in six.iteritems(run):
                 if key not in self.ext_pillars:
@@ -757,6 +780,7 @@ class Pillar(object):
                      'replaced by \'pillar_roots_override_ext_pillar\'.'
                 )
                 self.opts['pillar'], errors = self.ext_pillar({}, pillar_dirs)
+                self.rend = salt.loader.render(self.opts, self.functions)
                 matches = self.top_matches(top)
                 pillar, errors = self.render_pillar(matches, errors=errors)
                 if self.opts.get('pillar_roots_override_ext_pillar', False):
@@ -780,7 +804,7 @@ class Pillar(object):
             matches = self.top_matches(top)
             pillar, errors = self.render_pillar(matches)
         errors.extend(top_errors)
-        if self.opts.get('pillar_opts', True):
+        if self.opts.get('pillar_opts', False):
             mopts = dict(self.opts)
             if 'grains' in mopts:
                 mopts.pop('grains')
@@ -792,6 +816,14 @@ class Pillar(object):
             for error in errors:
                 log.critical('Pillar render error: {0}'.format(error))
             pillar['_errors'] = errors
+
+        if self.pillar_override and isinstance(self.pillar_override, dict):
+            pillar = merge(pillar,
+                           self.pillar_override,
+                           self.merge_strategy,
+                           self.opts.get('renderer', 'yaml'),
+                           self.opts.get('pillar_merge_lists', False))
+
         return pillar
 
 

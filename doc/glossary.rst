@@ -84,6 +84,11 @@ Glossary
         command are a single job. *See also*: :py:mod:`jobs runner
         <salt.runners.jobs>`.
 
+    Job Cache
+        A storage location for job results, which may then be queried by a 
+        salt runner or an external system. May be local to a salt master
+        or stored externally.
+
     Job ID
         A unique identifier to represent a given :term:`job`.
 
@@ -92,8 +97,8 @@ Glossary
         evaluated. *See also*: :ref:`state layers <state-layers-low-state>`.
 
     Master
-        A central Salt daemon which from which commands can be issued to
-        listening minions.
+        A central Salt daemon from which commands can be issued to listening
+        minions.
 
     Masterless
         A minion which does not require a Salt master to operate. All
@@ -252,3 +257,4 @@ Glossary
         A master process which can send notices and receive replies from
         minions. *See also*:
         :conf_master:`worker_threads`.
+

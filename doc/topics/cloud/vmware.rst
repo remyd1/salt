@@ -24,6 +24,18 @@ This package can be installed using `pip` or `easy_install`:
     pip install pyvmomi
     easy_install pyvmomi
 
+.. note::
+
+    Version 6.0 of pyVmomi has some problems with SSL error handling on certain
+    versions of Python. If using version 6.0 of pyVmomi, the machine that you
+    are running the proxy minion process from must have either Python 2.7.9 or
+    newer This is due to an upstream dependency in pyVmomi 6.0 that is not supported
+    in Python version 2.6 to 2.7.8. If the version of Python running the salt-cloud
+    command is not in the supported range, you will need to install an earlier version
+    of pyVmomi. See `Issue #29537`_ for more information.
+
+.. _Issue #29537: https://github.com/saltstack/salt/issues/29537
+
 
 Configuration
 =============
@@ -209,8 +221,11 @@ Set up an initial profile at ``/etc/salt/cloud.profiles`` or
 ``cores_per_socket``
     .. versionadded:: Boron
     Enter the number of cores per vCPU that you want the VM/template to have. If not specified,
-    this will default to 1. Note that you cannot assign more cores per socket than the total 
-    number of vCPUs assigned to the VM.
+    this will default to 1. 
+    
+    .. note::
+
+        Cores per socket should be less than or equal to the total number of vCPUs assigned to the VM/template.
 
 ``memory``
     Enter the memory size (in MB or GB) that you want the VM/template to have. If

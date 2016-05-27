@@ -661,27 +661,31 @@ def request_instance(vm_=None, call=None):
     if data.extra.get('password', None) is None and vm_.get('key_filename', None) is None:
         raise SaltCloudSystemExit('No password returned.  Set ssh_key_file.')
 
-    floating_ip_conf = config.get_cloud_config_value('floating_ip', vm_, __opts__, search_global=False)
+    floating_ip_conf = config.get_cloud_config_value('floating_ip',
+                                                     vm_,
+                                                     __opts__,
+                                                     search_global=False,
+                                                     default={})
     if floating_ip_conf.get('auto_assign', False):
         pool = floating_ip_conf.get('pool', 'public')
+        floating_ip = None
         for fl_ip, opts in conn.floating_ip_list().iteritems():
-            if opts['instance_id'] is None and opts['pool'] == pool:
+            if opts['fixed_ip'] is None and opts['pool'] == pool:
                 floating_ip = fl_ip
                 break
-            else:
-                floating_ip = conn.floating_ip_create(pool)
-
+        if floating_ip is None:
+            floating_ip = conn.floating_ip_create(pool)['ip']
         try:
             conn.floating_ip_associate(kwargs['name'], floating_ip)
             vm_['floating_ip'] = floating_ip
         except Exception as exc:
             raise SaltCloudSystemExit(
-            'Error assigning floating_ip for {0} on Nova\n\n'
-            'The following exception was thrown by libcloud when trying to '
-            'assing a floating ip: {1}\n'.format(
-                vm_['name'], exc
+                'Error assigning floating_ip for {0} on Nova\n\n'
+                'The following exception was thrown by libcloud when trying to '
+                'assing a floating ip: {1}\n'.format(
+                    vm_['name'], exc
+                )
             )
-        )
 
     vm_['password'] = data.extra.get('password', '')
 
@@ -831,7 +835,7 @@ def create(vm_):
         #         network.  If that network does not exist in the 'addresses' dictionary, then SaltCloud will
         #         use the initial access_ip, and not overwrite anything.
 
-        if any((cloudnetwork(vm_), rackconnect(vm_))) and (ssh_interface(vm_) != 'private_ips' or rcv3):
+        if any((cloudnetwork(vm_), rackconnect(vm_))) and (ssh_interface(vm_) != 'private_ips' or rcv3) and access_ip != '':
             data.public_ips = [access_ip, ]
             return data
 
@@ -841,6 +845,14 @@ def create(vm_):
            'floating_ips' not in node and 'fixed_ips' not in node and \
            'access_ip' in node.get('extra', {}):
             result = [node['extra']['access_ip']]
+
+        if not result:
+            temp_dd = node.get('addresses', {})
+            for k, addr_ll in temp_dd.iteritems():
+                for addr_dd in addr_ll:
+                    addr = addr_dd.get('addr', None)
+                    if addr is not None:
+                        result.append(addr.strip())
 
         private = node.get('private_ips', [])
         public = node.get('public_ips', [])

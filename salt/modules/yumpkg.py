@@ -2,6 +2,12 @@
 '''
 Support for YUM/DNF
 
+.. important::
+    If you feel that Salt should be using this module to manage packages on a
+    minion, and it is using a different module (or gives an error similar to
+    *'pkg.install' is not available*), see :ref:`here
+    <module-provider-override>`.
+
 .. note::
     DNF is fully supported as of version 2015.5.10 and 2015.8.4 (partial
     support for DNF was initially added in 2015.8.0), and DNF is used
@@ -30,12 +36,6 @@ try:
 except ImportError:
     from salt.ext.six.moves import configparser
     HAS_YUM = False
-
-try:
-    import rpmUtils.miscutils
-    HAS_RPMUTILS = True
-except ImportError:
-    HAS_RPMUTILS = False
 # pylint: enable=import-error,redefined-builtin
 
 # Import salt libs
@@ -154,7 +154,10 @@ def _yum_pkginfo(output):
                                                           cur['arch'],
                                                           osarch)
         else:
-            if key == 'repoid':
+            if key == 'version':
+                # Suppport packages with no 'Release' parameter
+                value = value.rstrip('-')
+            elif key == 'repoid':
                 # Installed packages show a '@' at the beginning
                 value = value.lstrip('@')
             cur[key] = value
@@ -530,26 +533,8 @@ def version_cmp(pkg1, pkg2):
 
         salt '*' pkg.version_cmp '0.2-001' '0.2.0.1-002'
     '''
-    if HAS_RPMUTILS:
-        try:
-            cmp_result = rpmUtils.miscutils.compareEVR(
-                rpmUtils.miscutils.stringToVersion(pkg1),
-                rpmUtils.miscutils.stringToVersion(pkg2)
-            )
-            if cmp_result not in (-1, 0, 1):
-                raise Exception(
-                    'cmp result \'{0}\' is invalid'.format(cmp_result)
-                )
-            return cmp_result
-        except Exception as exc:
-            log.warning(
-                'Failed to compare version \'%s\' to \'%s\' using '
-                'rpmUtils: %s', pkg1, pkg2, exc
-            )
-    # Fall back to distutils.version.LooseVersion (should only need to do
-    # this for RHEL5, or if an exception is raised when attempting to compare
-    # using rpmUtils)
-    return salt.utils.version_cmp(pkg1, pkg2)
+
+    return __salt__['lowpkg.version_cmp'](pkg1, pkg2)
 
 
 def list_pkgs(versions_as_list=False, **kwargs):
@@ -1038,7 +1023,10 @@ def install(name=None,
             log.warning('"version" parameter will be ignored for multiple '
                         'package targets')
 
-    old = list_pkgs()
+    old = list_pkgs(versions_as_list=False)
+    # Use of __context__ means no duplicate work here, just accessing
+    # information already in __context__ from the previous call to list_pkgs()
+    old_as_list = list_pkgs(versions_as_list=True)
     targets = []
     downgrade = []
     to_reinstall = {}
@@ -1089,6 +1077,13 @@ def install(name=None,
             # not None, since the only way version_num is not None is if RPM
             # metadata parsing was successful.
             if pkg_type == 'repository':
+                if _yum() == 'yum':
+                    # yum install does not support epoch without the arch, and
+                    # we won't know what the arch will be when it's not
+                    # provided. It could either be the OS architecture, or
+                    # 'noarch', and we don't make that distinction in the
+                    # pkg.list_pkgs return data.
+                    version_num = version_num.split(':', 1)[-1]
                 arch = ''
                 try:
                     namepart, archpart = pkgname.rsplit('.', 1)
@@ -1103,20 +1098,54 @@ def install(name=None,
             else:
                 pkgstr = pkgpath
 
-            cver = old.get(pkgname, '')
-            if reinstall and cver \
-                    and salt.utils.compare_versions(ver1=version_num,
-                                                    oper='==',
-                                                    ver2=cver,
-                                                    cmp_func=version_cmp):
-                to_reinstall[pkgname] = pkgstr
-            elif not cver or salt.utils.compare_versions(ver1=version_num,
-                                                         oper='>=',
-                                                         ver2=cver,
-                                                         cmp_func=version_cmp):
-                targets.append(pkgstr)
+            # Lambda to trim the epoch from the currently-installed version if
+            # no epoch is specified in the specified version
+            norm_epoch = lambda x, y: x.split(':', 1)[-1] \
+                if ':' not in y \
+                else x
+            cver = old_as_list.get(pkgname, [])
+            if reinstall and cver:
+                for ver in cver:
+                    ver = norm_epoch(ver, version_num)
+                    if salt.utils.compare_versions(ver1=version_num,
+                                                   oper='==',
+                                                   ver2=ver,
+                                                   cmp_func=version_cmp):
+                        # This version is already installed, so we need to
+                        # reinstall.
+                        to_reinstall[pkgname] = pkgstr
+                        break
             else:
-                downgrade.append(pkgstr)
+                if not cver:
+                    targets.append(pkgstr)
+                else:
+                    for ver in cver:
+                        ver = norm_epoch(ver, version_num)
+                        if salt.utils.compare_versions(ver1=version_num,
+                                                       oper='>=',
+                                                       ver2=ver,
+                                                       cmp_func=version_cmp):
+                            targets.append(pkgstr)
+                            break
+                    else:
+                        if re.match('kernel(-.+)?', name):
+                            # kernel and its subpackages support multiple
+                            # installs as their paths do not conflict.
+                            # Performing a yum/dnf downgrade will be a no-op
+                            # so just do an install instead. It will fail if
+                            # there are other interdependencies that have
+                            # conflicts, and that's OK. We don't want to force
+                            # anything, we just want to properly handle it if
+                            # someone tries to install a kernel/kernel-devel of
+                            # a lower version than the currently-installed one.
+                            # TODO: find a better way to determine if a package
+                            # supports multiple installs.
+                            targets.append(pkgstr)
+                        else:
+                            # None of the currently-installed versions are
+                            # greater than the specified version, so this is a
+                            # downgrade.
+                            downgrade.append(pkgstr)
 
     def _add_common_args(cmd):
         '''
@@ -1175,7 +1204,7 @@ def install(name=None,
             errors.append(out['stdout'])
 
     __context__.pop('pkg.list_pkgs', None)
-    new = list_pkgs()
+    new = list_pkgs(versions_as_list=False)
 
     ret = salt.utils.compare_dicts(old, new)
 
@@ -1662,6 +1691,9 @@ def verify(*names, **kwargs):
 
     Runs an rpm -Va on a system, and returns the results in a dict
 
+    Pass options to modify rpm verify behavior using the ``verify_options``
+    keyword argument
+
     Files with an attribute of config, doc, ghost, license or readme in the
     package header can be ignored using the ``ignore_types`` keyword argument
 
@@ -1673,6 +1705,7 @@ def verify(*names, **kwargs):
         salt '*' pkg.verify httpd
         salt '*' pkg.verify 'httpd postfix'
         salt '*' pkg.verify 'httpd postfix' ignore_types=['config','doc']
+        salt '*' pkg.verify 'httpd postfix' verify_options=['nodeps','nosize']
     '''
     return __salt__['lowpkg.verify'](*names, **kwargs)
 
@@ -1990,7 +2023,7 @@ def list_repos(basedir=None):
     return repos
 
 
-def get_repo(repo, basedir=None, **kwargs):  # pylint: disable=W0613
+def get_repo(name, basedir=None, **kwargs):  # pylint: disable=W0613
     '''
     Display a repo from <basedir> (default basedir: all dirs in ``reposdir``
     yum option).
@@ -2007,22 +2040,23 @@ def get_repo(repo, basedir=None, **kwargs):  # pylint: disable=W0613
 
     # Find out what file the repo lives in
     repofile = ''
-    for arepo in six.iterkeys(repos):
-        if arepo == repo:
-            repofile = repos[arepo]['file']
+    for repo in repos:
+        if repo == name:
+            repofile = repos[repo]['file']
 
     if repofile:
         # Return just one repo
         filerepos = _parse_repo_file(repofile)[1]
-        return filerepos[repo]
+        return filerepos[name]
     return {}
 
 
 def del_repo(repo, basedir=None, **kwargs):  # pylint: disable=W0613
     '''
-    Delete a repo from <basedir> (default basedir: all dirs in `reposdir` yum option).
+    Delete a repo from <basedir> (default basedir: all dirs in `reposdir` yum
+    option).
 
-    If the .repo file that the repo exists in does not contain any other repo
+    If the .repo file in which the repo exists does not contain any other repo
     configuration, the file itself will be deleted.
 
     CLI Examples:
@@ -2299,18 +2333,6 @@ def file_dict(*packages):
         salt '*' pkg.file_list
     '''
     return __salt__['lowpkg.file_dict'](*packages)
-
-
-def expand_repo_def(repokwargs):
-    '''
-    Take a repository definition and expand it to the full pkg repository dict
-    that can be used for comparison. This is a helper function to make
-    certain repo managers sane for comparison in the pkgrepo states.
-
-    There is no use to calling this function via the CLI.
-    '''
-    # YUM doesn't need the data massaged.
-    return repokwargs
 
 
 def owner(*paths):
